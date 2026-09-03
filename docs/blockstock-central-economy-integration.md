@@ -34,11 +34,12 @@ Bluechip startup liquidity is **not** a second currency and is never minted by B
 ## Deployment and acceptance sequence
 
 1. Stop the Paper server and back up `plugins/BlockStock/blockeco.db` and the existing economy data.
-2. Keep `Vault.jar`; remove the Essentials economy provider only after CentralEconomy is installed.
-3. Install CentralEconomy, then BlockStock; start Paper and confirm Vault reports CentralEconomy as the active Economy provider.
-4. Confirm BlockStock logs `BlockStock ready; secondary trading=open` with no economy-provider error.
-5. Use a disposable test player to transfer a small amount wallet → BlockStock securities account → wallet.  Verify exactly one CentralEconomy debit and one credit ledger entry, with matching BlockStock durable-operation records; neither side may create value.
-6. Test one company registration payment and one stock order reservation/cancel.  Confirm the latter never changes the external wallet balance.
+2. Keep `Vault.jar`; remove or disable the Essentials economy provider only after CentralEconomy is installed.
+3. Start CentralEconomy first and confirm Vault reports it as the sole active Economy provider.
+4. As a CentralEconomy administrator, create the required Treasury balance through the server's approved issuance workflow, then execute `/economy reserve fund 1150000.00 <memo>` (or the total implied by the active `bluechips` configuration). This is an explicit `TREASURY_ALLOCATION` from Treasury to BlockStock reserve UUID `...0098`; it must fail without changing balances if Treasury is insufficient.
+5. Start or retry BlockStock. It transfers that existing reserve balance from `.98` into its escrow through Vault, then publishes the market only after both legs are confirmed. Confirm `BlockStock ready; secondary trading=open` with no economy-provider error.
+6. Use a disposable test player to transfer a small amount wallet → BlockStock securities account → wallet. Verify exactly one CentralEconomy debit and one credit ledger entry, with matching BlockStock durable-operation records; neither side may create value.
+7. Test one company registration payment and one stock order reservation/cancel. Confirm the latter never changes the external wallet balance.
 
 ## CentralEconomy reply / acknowledgement
 
