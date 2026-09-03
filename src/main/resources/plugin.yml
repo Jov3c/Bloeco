@@ -3,6 +3,7 @@ version: 1.0.0-SNAPSHOT
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 softdepend: [Vault]
+loadbefore: [BlockStock]
 commands:
   economy:
     description: Opens treasury procurement and economy commands.
