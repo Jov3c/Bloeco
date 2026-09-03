@@ -1,0 +1,8 @@
+name: CentralEconomy
+version: 1.0.0-SNAPSHOT
+main: com.blocke.centraleconomy.CentralEconomyPlugin
+api-version: '1.21'
+permissions:
+  centraleconomy.admin:
+    description: Allows administration of the CentralEconomy treasury and configuration.
+    default: op
