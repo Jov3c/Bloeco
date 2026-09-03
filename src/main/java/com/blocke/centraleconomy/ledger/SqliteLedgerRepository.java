@@ -22,6 +22,7 @@ import java.util.UUID;
 public final class SqliteLedgerRepository implements LedgerRepository {
     private final Connection connection;
     private final Clock clock;
+    private boolean transactionActive;
 
     public SqliteLedgerRepository(Path databasePath) {
         this(databasePath, Clock.systemUTC());
@@ -65,16 +66,30 @@ public final class SqliteLedgerRepository implements LedgerRepository {
             return;
         }
 
-        Map<AccountId, Long> deltas = aggregateOrdinaryAccountDeltas(batch);
+        inTransaction(transaction -> {
+            transaction.applyLedgerPostings(batch);
+            return null;
+        });
+    }
+
+    /**
+     * Runs market persistence and ledger postings against this repository's single SQLite transaction.
+     * Callers must use {@link SqlTransaction#applyLedgerPostings(List)} for every monetary mutation.
+     */
+    public synchronized <T> T inTransaction(SqlWork<T> work) {
+        Objects.requireNonNull(work, "work");
+        if (transactionActive) {
+            throw new IllegalStateException("nested SQLite ledger transactions are not supported");
+        }
+
         boolean transactionStarted = false;
         try {
             beginImmediate();
             transactionStarted = true;
-
-            Map<AccountId, Long> newBalances = verifiedNewBalances(deltas);
-            persistBalances(newBalances);
-            insertEntries(batch);
+            transactionActive = true;
+            T result = work.run(new SqlTransaction());
             commit();
+            return result;
         } catch (SQLException exception) {
             if (transactionStarted) {
                 rollback();
@@ -85,6 +100,37 @@ public final class SqliteLedgerRepository implements LedgerRepository {
                 rollback();
             }
             throw exception;
+        } finally {
+            transactionActive = false;
+        }
+    }
+
+    @FunctionalInterface
+    public interface SqlWork<T> {
+        T run(SqlTransaction transaction) throws SQLException;
+    }
+
+    /** A ledger-owned SQLite transaction that permits market rows and validated ledger postings to commit together. */
+    public final class SqlTransaction {
+        private SqlTransaction() {
+        }
+
+        public Connection connection() {
+            return connection;
+        }
+
+        public void applyLedgerPostings(List<Posting> postings) {
+            List<Posting> batch = List.copyOf(Objects.requireNonNull(postings, "postings"));
+            if (batch.isEmpty()) {
+                return;
+            }
+            try {
+                Map<AccountId, Long> newBalances = verifiedNewBalances(aggregateOrdinaryAccountDeltas(batch));
+                persistBalances(newBalances);
+                insertEntries(batch);
+            } catch (SQLException exception) {
+                throw new IllegalStateException("ledger transaction failed", exception);
+            }
         }
     }
 
