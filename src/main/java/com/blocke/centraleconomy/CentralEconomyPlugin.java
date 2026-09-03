@@ -3,8 +3,12 @@ package com.blocke.centraleconomy;
 import com.blocke.centraleconomy.economy.EconomyService;
 import com.blocke.centraleconomy.economy.ProcurementItem;
 import com.blocke.centraleconomy.ledger.SqliteLedgerRepository;
+import com.blocke.centraleconomy.market.MarketService;
+import com.blocke.centraleconomy.market.SqliteMarketRepository;
 import com.blocke.centraleconomy.money.Money;
 import com.blocke.centraleconomy.paper.EconomyCommand;
+import com.blocke.centraleconomy.paper.MarketCommand;
+import com.blocke.centraleconomy.paper.MarketMenu;
 import com.blocke.centraleconomy.paper.ProcurementMenu;
 import com.blocke.centraleconomy.vault.CentralEconomyVaultProvider;
 import org.bukkit.Material;
@@ -27,11 +31,15 @@ public class CentralEconomyPlugin extends JavaPlugin {
     public void onEnable() {
         saveDefaultConfig();
         saveResource("procurement.yml", false);
+        saveResource("market.yml", false);
 
         ledger = new SqliteLedgerRepository(getDataFolder().toPath().resolve(getConfig().getString("database-file", "economy.db")));
         EconomyService economy = new EconomyService(ledger, procurementTaxPercent());
         ProcurementMenu menu = new ProcurementMenu(this, economy, loadProcurementItems());
         getCommand("economy").setExecutor(new EconomyCommand(economy, menu));
+        MarketService market = new MarketService(ledger, new SqliteMarketRepository(ledger), marketFeePercent());
+        MarketMenu marketMenu = new MarketMenu(this, market);
+        getCommand("market").setExecutor(new MarketCommand(marketMenu));
         registerVaultProvider();
     }
 
@@ -62,6 +70,16 @@ public class CentralEconomyPlugin extends JavaPlugin {
         int percentage = (int) Math.round(configuredRate * 100.0d);
         if (percentage < 0 || percentage > 100 || Math.abs(configuredRate - percentage / 100.0d) > 0.0000001d) {
             throw new IllegalArgumentException("procurement-income-tax-rate must be a whole percentage expressed as a fraction");
+        }
+        return percentage;
+    }
+
+    private int marketFeePercent() {
+        File marketFile = new File(getDataFolder(), getConfig().getString("market-file", "market.yml"));
+        double configuredRate = YamlConfiguration.loadConfiguration(marketFile).getDouble("fee-rate", 0.02d);
+        int percentage = (int) Math.round(configuredRate * 100.0d);
+        if (percentage < 0 || percentage > 20 || Math.abs(configuredRate - percentage / 100.0d) > 0.0000001d) {
+            throw new IllegalArgumentException("market fee-rate must be a whole percentage from 0.00 to 0.20");
         }
         return percentage;
     }

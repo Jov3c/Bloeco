@@ -5,3 +5,4 @@ currency:
   symbol: "⛃"
 procurement-income-tax-rate: 0.05
 database-file: economy.db
+market-file: market.yml

@@ -8,6 +8,9 @@ commands:
   economy:
     description: Opens treasury procurement and economy commands.
     usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>]
+  market:
+    description: Opens the player commodity market.
+    usage: /market [sell <price>|mine]
 permissions:
   centraleconomy.admin:
     description: Allows administration of the CentralEconomy treasury and configuration.

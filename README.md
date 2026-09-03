@@ -6,6 +6,10 @@ CentralEconomy is a Paper 1.21.11 economy plugin backed by one SQLite ledger.
 
 Vault is optional. When its plugin is enabled, CentralEconomy registers an `Economy` provider at highest priority. Player balances remain global (world parameters are ignored), deposits create `EXTERNAL_CREDIT` ledger entries, and withdrawals create `EXTERNAL_DEBIT` entries. Bank accounts are not supported.
 
+## Market
+
+`/market` browses active player listings. Click a listing and confirm to buy one plain Material item; the menu checks inventory capacity before it settles the purchase and delivers the item only after settlement. `/market sell <price>` lists the plain stack in your main hand at the supplied per-item price, while `/market mine` shows your active listings and lets you cancel them to return the remaining items. The default 2% fee is configured in `market.yml` and is credited to the treasury.
+
 ## 与 Blockeco / BlockStock 联动
 
 BlockStock 已通过 Vault 的 `Economy` 服务进行公司创建、IPO、股票交易、托管与分红结算；它不应直接读取本插件的 SQLite 文件。将两个插件安装到同一 Paper 1.21.11 服务器后，CentralEconomy 会在 `BlockStock` 前加载并以最高优先级注册 Vault 经济服务，因此 BlockStock 的余额操作都会进入 CentralEconomy 的唯一账本。
