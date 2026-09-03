@@ -1,12 +1,79 @@
 package com.blocke.centraleconomy;
 
+import com.blocke.centraleconomy.economy.EconomyService;
+import com.blocke.centraleconomy.economy.ProcurementItem;
+import com.blocke.centraleconomy.ledger.SqliteLedgerRepository;
+import com.blocke.centraleconomy.money.Money;
+import com.blocke.centraleconomy.paper.EconomyCommand;
+import com.blocke.centraleconomy.paper.ProcurementMenu;
+import org.bukkit.Material;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 public class CentralEconomyPlugin extends JavaPlugin {
+    private SqliteLedgerRepository ledger;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         saveResource("procurement.yml", false);
+
+        ledger = new SqliteLedgerRepository(getDataFolder().toPath().resolve(getConfig().getString("database-file", "economy.db")));
+        EconomyService economy = new EconomyService(ledger, procurementTaxPercent());
+        ProcurementMenu menu = new ProcurementMenu(this, economy, loadProcurementItems());
+        getCommand("economy").setExecutor(new EconomyCommand(economy, menu));
+    }
+
+    @Override
+    public void onDisable() {
+        if (ledger != null) {
+            ledger.close();
+            ledger = null;
+        }
+    }
+
+    private int procurementTaxPercent() {
+        double configuredRate = getConfig().getDouble("procurement-income-tax-rate", 0.05d);
+        int percentage = (int) Math.round(configuredRate * 100.0d);
+        if (percentage < 0 || percentage > 100 || Math.abs(configuredRate - percentage / 100.0d) > 0.0000001d) {
+            throw new IllegalArgumentException("procurement-income-tax-rate must be a whole percentage expressed as a fraction");
+        }
+        return percentage;
+    }
+
+    private List<ProcurementItem> loadProcurementItems() {
+        File procurementFile = new File(getDataFolder(), "procurement.yml");
+        ConfigurationSection items = YamlConfiguration.loadConfiguration(procurementFile).getConfigurationSection("items");
+        if (items == null) {
+            return List.of();
+        }
+        List<ProcurementItem> loaded = new ArrayList<>();
+        for (String key : items.getKeys(false)) {
+            ConfigurationSection item = items.getConfigurationSection(key);
+            if (item == null) {
+                continue;
+            }
+            String materialName = item.getString("material", key);
+            Material material = Material.matchMaterial(materialName.toUpperCase(Locale.ROOT).replace("MINECRAFT:", ""));
+            if (material == null || !material.isItem()) {
+                getLogger().warning("Ignoring procurement item with invalid material: " + materialName);
+                continue;
+            }
+            long unitPrice = item.getLong("unit-price-cents", 0L);
+            int maximum = item.getInt("max-per-sale", 0);
+            boolean enabled = item.getBoolean("enabled", true);
+            try {
+                loaded.add(new ProcurementItem("minecraft:" + material.key().value(), Money.ofCents(unitPrice), maximum, enabled));
+            } catch (IllegalArgumentException exception) {
+                getLogger().warning("Ignoring invalid procurement item " + key + ": " + exception.getMessage());
+            }
+        }
+        return List.copyOf(loaded);
     }
 }

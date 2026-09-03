@@ -2,6 +2,10 @@ name: CentralEconomy
 version: 1.0.0-SNAPSHOT
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
+commands:
+  economy:
+    description: Opens treasury procurement and economy commands.
+    usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>]
 permissions:
   centraleconomy.admin:
     description: Allows administration of the CentralEconomy treasury and configuration.
