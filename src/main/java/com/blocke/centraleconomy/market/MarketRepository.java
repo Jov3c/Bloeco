@@ -21,7 +21,11 @@ public interface MarketRepository {
             int feeRatePercent,
             List<LedgerRepository.Posting> postings);
 
+    MarketListing cancelListing(UUID listingId, UUID sellerId);
+
     Optional<MarketListing> findListing(UUID listingId);
+
+    List<MarketListing> activeListings();
 
     List<MarketTrade> tradesForListing(UUID listingId);
 }

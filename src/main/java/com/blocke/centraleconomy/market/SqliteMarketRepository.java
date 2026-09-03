@@ -97,9 +97,32 @@ public final class SqliteMarketRepository implements MarketRepository {
     }
 
     @Override
+    public MarketListing cancelListing(UUID listingId, UUID sellerId) {
+        Objects.requireNonNull(listingId, "listingId");
+        Objects.requireNonNull(sellerId, "sellerId");
+
+        return ledger.inTransaction(transaction -> {
+            MarketListing listing = activeListing(transaction.connection(), listingId)
+                    .orElseThrow(() -> new IllegalStateException("listing is no longer active"));
+            if (!listing.sellerId().equals(sellerId)) {
+                throw new IllegalArgumentException("only the seller may cancel this listing");
+            }
+            cancelListing(transaction.connection(), listing.id());
+            return new MarketListing(
+                    listing.id(), listing.sellerId(), listing.material(), listing.originalQuantity(),
+                    listing.remainingQuantity(), listing.unitPrice(), MarketListing.Status.CANCELLED, listing.createdAt());
+        });
+    }
+
+    @Override
     public Optional<MarketListing> findListing(UUID listingId) {
         Objects.requireNonNull(listingId, "listingId");
         return ledger.inTransaction(transaction -> findListing(transaction.connection(), listingId));
+    }
+
+    @Override
+    public List<MarketListing> activeListings() {
+        return ledger.inTransaction(transaction -> readActiveListings(transaction.connection()));
     }
 
     @Override
@@ -199,6 +222,18 @@ public final class SqliteMarketRepository implements MarketRepository {
         }
     }
 
+    private static void cancelListing(Connection connection, UUID listingId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE market_listings SET status = 'CANCELLED'
+                WHERE id = ? AND status = 'ACTIVE'
+                """)) {
+            statement.setString(1, listingId.toString());
+            if (statement.executeUpdate() != 1) {
+                throw new IllegalStateException("listing is no longer active");
+            }
+        }
+    }
+
     private static void insertTrade(Connection connection, MarketTrade trade) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO market_trades(
@@ -238,6 +273,20 @@ public final class SqliteMarketRepository implements MarketRepository {
                 }
                 return List.copyOf(trades);
             }
+        }
+    }
+
+    private static List<MarketListing> readActiveListings(Connection connection) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT id, seller_id, material, original_quantity, remaining_quantity, unit_price_cents, status, created_at_epoch_ms
+                FROM market_listings WHERE status = 'ACTIVE' ORDER BY created_at_epoch_ms, id
+                """);
+             ResultSet result = statement.executeQuery()) {
+            java.util.ArrayList<MarketListing> listings = new java.util.ArrayList<>();
+            while (result.next()) {
+                listings.add(toListing(result));
+            }
+            return List.copyOf(listings);
         }
     }
 
