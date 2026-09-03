@@ -6,10 +6,13 @@ import com.blocke.centraleconomy.ledger.SqliteLedgerRepository;
 import com.blocke.centraleconomy.money.Money;
 import com.blocke.centraleconomy.paper.EconomyCommand;
 import com.blocke.centraleconomy.paper.ProcurementMenu;
+import com.blocke.centraleconomy.vault.CentralEconomyVaultProvider;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.plugin.ServicePriority;
+import net.milkbowl.vault.economy.Economy;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -18,6 +21,7 @@ import java.util.Locale;
 
 public class CentralEconomyPlugin extends JavaPlugin {
     private SqliteLedgerRepository ledger;
+    private CentralEconomyVaultProvider vaultProvider;
 
     @Override
     public void onEnable() {
@@ -28,14 +32,29 @@ public class CentralEconomyPlugin extends JavaPlugin {
         EconomyService economy = new EconomyService(ledger, procurementTaxPercent());
         ProcurementMenu menu = new ProcurementMenu(this, economy, loadProcurementItems());
         getCommand("economy").setExecutor(new EconomyCommand(economy, menu));
+        registerVaultProvider();
     }
 
     @Override
     public void onDisable() {
+        getServer().getServicesManager().unregisterAll(this);
+        vaultProvider = null;
         if (ledger != null) {
             ledger.close();
             ledger = null;
         }
+    }
+
+    private void registerVaultProvider() {
+        var vault = getServer().getPluginManager().getPlugin("Vault");
+        if (vault == null || !vault.isEnabled()) {
+            return;
+        }
+        String singular = getConfig().getString("currency.singular", "金币");
+        String plural = getConfig().getString("currency.plural", singular);
+        vaultProvider = new CentralEconomyVaultProvider(ledger, singular, plural);
+        getServer().getServicesManager().register(Economy.class, vaultProvider, this, ServicePriority.Highest);
+        getLogger().info("Registered CentralEconomy with Vault.");
     }
 
     private int procurementTaxPercent() {

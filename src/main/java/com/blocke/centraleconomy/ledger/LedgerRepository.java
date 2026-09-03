@@ -34,7 +34,10 @@ public interface LedgerRepository extends AutoCloseable {
             if (debitAccount.isIssuance() && transactionType != TransactionType.ISSUE) {
                 throw new IllegalArgumentException("issuance may only fund ISSUE transactions");
             }
-            if (creditAccount.isIssuance()) {
+            if (debitAccount.equals(AccountId.externalCredit()) && transactionType != TransactionType.EXTERNAL_CREDIT) {
+                throw new IllegalArgumentException("external credit may only fund EXTERNAL_CREDIT transactions");
+            }
+            if (creditAccount.isUnfundedSource()) {
                 throw new IllegalArgumentException("issuance may only be a debit account");
             }
         }

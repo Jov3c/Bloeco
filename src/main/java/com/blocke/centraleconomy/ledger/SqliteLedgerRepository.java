@@ -153,7 +153,7 @@ public final class SqliteLedgerRepository implements LedgerRepository {
     private Map<AccountId, Long> aggregateOrdinaryAccountDeltas(List<Posting> batch) {
         Map<AccountId, Long> deltas = new HashMap<>();
         for (Posting posting : batch) {
-            if (!posting.debitAccount().isIssuance()) {
+            if (!posting.debitAccount().isUnfundedSource()) {
                 addDelta(deltas, posting.debitAccount(), -posting.amount().cents());
             }
             addDelta(deltas, posting.creditAccount(), posting.amount().cents());

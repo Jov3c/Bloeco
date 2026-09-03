@@ -24,7 +24,7 @@ public record Money(long cents) {
         try {
             long cents = BigDecimal.valueOf(amount)
                     .movePointRight(2)
-                    .setScale(0, RoundingMode.HALF_UP)
+                    .setScale(0, RoundingMode.UNNECESSARY)
                     .longValueExact();
             return ofCents(cents);
         } catch (ArithmeticException exception) {

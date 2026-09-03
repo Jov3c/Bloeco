@@ -1,5 +1,7 @@
 currency:
   name: "金币"
+  singular: "金币"
+  plural: "金币"
   symbol: "⛃"
 procurement-income-tax-rate: 0.05
 database-file: economy.db
