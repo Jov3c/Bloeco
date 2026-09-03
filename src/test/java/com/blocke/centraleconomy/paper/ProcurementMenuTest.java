@@ -17,6 +17,7 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -90,6 +91,21 @@ class ProcurementMenuTest {
         assertEquals(12, plainCount(player, Material.WHEAT));
         assertEquals(0, service.playerBalance(player.getUniqueId()).cents());
         assertTrue(player.nextMessage().contains("rejected"));
+    }
+
+    @Test
+    void treasuryAdministratorCanAllocateExistingFundsToTheDefaultBlockStockReserve() {
+        PlayerMock administrator = server.addPlayer();
+        administrator.setOp(true);
+        EconomyCommand command = new EconomyCommand(service, menu);
+        service.issueToTreasury(Money.ofCents(10_000), "approved supply");
+
+        assertTrue(command.onCommand(administrator, null, "economy",
+                new String[]{"reserve", "fund", "50.00", "bluechip", "liquidity"}));
+
+        UUID reserveId = UUID.fromString("00000000-0000-0000-0000-000000000098");
+        assertEquals(5_000, service.treasuryBalance().cents());
+        assertEquals(5_000, service.playerBalance(reserveId).cents());
     }
 
     private static int plainCount(PlayerMock player, Material material) {

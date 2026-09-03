@@ -4,6 +4,7 @@ package com.blocke.centraleconomy.ledger;
 public enum TransactionType {
     ISSUE,
     BURN,
+    TREASURY_ALLOCATION,
     PROCUREMENT_GROSS,
     PROCUREMENT_TAX,
     VAULT_DEPOSIT,

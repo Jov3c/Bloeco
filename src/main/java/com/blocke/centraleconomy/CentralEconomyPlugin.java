@@ -22,6 +22,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public class CentralEconomyPlugin extends JavaPlugin {
     private SqliteLedgerRepository ledger;
@@ -36,7 +37,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
         ledger = new SqliteLedgerRepository(getDataFolder().toPath().resolve(getConfig().getString("database-file", "economy.db")));
         EconomyService economy = new EconomyService(ledger, procurementTaxPercent());
         ProcurementMenu menu = new ProcurementMenu(this, economy, loadProcurementItems());
-        getCommand("economy").setExecutor(new EconomyCommand(economy, menu));
+        getCommand("economy").setExecutor(new EconomyCommand(economy, menu, blockStockReserveTreasury()));
         MarketService market = new MarketService(ledger, new SqliteMarketRepository(ledger), marketFeePercent());
         MarketMenu marketMenu = new MarketMenu(this, market);
         getCommand("market").setExecutor(new MarketCommand(marketMenu));
@@ -82,6 +83,16 @@ public class CentralEconomyPlugin extends JavaPlugin {
             throw new IllegalArgumentException("market fee-rate must be a whole percentage from 0.00 to 0.20");
         }
         return percentage;
+    }
+
+    private UUID blockStockReserveTreasury() {
+        String raw = getConfig().getString("blockstock.bluechip-reserve-treasury-uuid",
+                "00000000-0000-0000-0000-000000000098");
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalArgumentException("blockstock.bluechip-reserve-treasury-uuid must be a UUID", exception);
+        }
     }
 
     private List<ProcurementItem> loadProcurementItems() {

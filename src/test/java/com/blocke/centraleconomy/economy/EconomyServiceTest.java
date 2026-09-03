@@ -107,4 +107,31 @@ class EconomyServiceTest {
         assertEquals(500, repository.balance(AccountId.burn()).cents());
         assertEquals(2, repository.entryCount());
     }
+
+    @Test
+    void blockStockReserveFundingMovesExistingTreasuryFundsWithoutIssuingCurrency() {
+        UUID reserveTreasury = UUID.fromString("00000000-0000-0000-0000-000000000098");
+        service.issueToTreasury(Money.ofCents(115_000_000), "approved opening supply");
+
+        service.fundBlockStockReserve(reserveTreasury, Money.ofCents(115_000_000), "bluechip market reserve");
+
+        assertEquals(0, service.treasuryBalance().cents());
+        assertEquals(115_000_000, service.playerBalance(reserveTreasury).cents());
+        assertEquals(115_000_000, repository.balance(AccountId.issuance()).cents());
+        assertEquals(2, repository.entryCount());
+    }
+
+    @Test
+    void blockStockReserveFundingRejectsInsufficientTreasuryWithoutMutation() {
+        UUID reserveTreasury = UUID.fromString("00000000-0000-0000-0000-000000000098");
+        service.issueToTreasury(Money.ofCents(100), "limited supply");
+
+        assertThrows(IllegalStateException.class, () ->
+                service.fundBlockStockReserve(reserveTreasury, Money.ofCents(101), "bluechip market reserve"));
+
+        assertEquals(100, service.treasuryBalance().cents());
+        assertEquals(0, service.playerBalance(reserveTreasury).cents());
+        assertEquals(1, repository.entryCount());
+    }
+
 }

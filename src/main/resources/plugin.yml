@@ -7,7 +7,7 @@ loadbefore: [BlockStock]
 commands:
   economy:
     description: Opens treasury procurement and economy commands.
-    usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>]
+    usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>|reserve <status|fund <amount> <memo>>]
   market:
     description: Opens the player commodity market.
     usage: /market [sell <price>|mine]

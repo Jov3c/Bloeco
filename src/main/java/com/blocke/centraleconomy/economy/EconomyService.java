@@ -31,6 +31,19 @@ public final class EconomyService {
         ledger.transfer(AccountId.treasury(), AccountId.burn(), amount, TransactionType.BURN, memo);
     }
 
+    /**
+     * Moves already-issued Treasury funds into BlockStock's restricted bluechip reserve.
+     * This is an allocation, never a currency issuance.
+     */
+    public synchronized void fundBlockStockReserve(UUID reserveTreasury, Money amount, String memo) {
+        Objects.requireNonNull(reserveTreasury, "reserveTreasury");
+        if (ledger.balance(AccountId.treasury()).cents() < amount.cents()) {
+            throw new IllegalStateException("treasury has insufficient funds for BlockStock reserve");
+        }
+        ledger.transfer(AccountId.treasury(), AccountId.player(reserveTreasury), amount,
+                TransactionType.TREASURY_ALLOCATION, memo);
+    }
+
     public synchronized ProcurementQuote quoteProcurement(UUID playerId, ProcurementItem item, int quantity) {
         Objects.requireNonNull(playerId, "playerId");
         validateItemAndQuantity(item, quantity);

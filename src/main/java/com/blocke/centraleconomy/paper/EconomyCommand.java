@@ -13,17 +13,26 @@ import java.math.RoundingMode;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.UUID;
 
 /** Player and administrator command boundary for the central economy. */
 public final class EconomyCommand implements CommandExecutor {
     private static final String ADMIN_PERMISSION = "centraleconomy.admin";
+    private static final UUID DEFAULT_BLOCKSTOCK_RESERVE_TREASURY =
+            UUID.fromString("00000000-0000-0000-0000-000000000098");
 
     private final EconomyService economy;
     private final ProcurementMenu menu;
+    private final UUID blockStockReserveTreasury;
 
     public EconomyCommand(EconomyService economy, ProcurementMenu menu) {
+        this(economy, menu, DEFAULT_BLOCKSTOCK_RESERVE_TREASURY);
+    }
+
+    public EconomyCommand(EconomyService economy, ProcurementMenu menu, UUID blockStockReserveTreasury) {
         this.economy = Objects.requireNonNull(economy, "economy");
         this.menu = Objects.requireNonNull(menu, "menu");
+        this.blockStockReserveTreasury = Objects.requireNonNull(blockStockReserveTreasury, "blockStockReserveTreasury");
     }
 
     @Override
@@ -40,6 +49,7 @@ public final class EconomyCommand implements CommandExecutor {
             case "balance" -> balance(sender, args);
             case "report" -> report(sender);
             case "treasury" -> treasury(sender, args);
+            case "reserve" -> reserve(sender, args);
             default -> false;
         };
     }
@@ -98,6 +108,41 @@ public final class EconomyCommand implements CommandExecutor {
             }
         } catch (RuntimeException exception) {
             sender.sendMessage("Treasury operation rejected: " + exception.getMessage());
+        }
+        return true;
+    }
+
+    private boolean reserve(CommandSender sender, String[] args) {
+        if (!sender.hasPermission(ADMIN_PERMISSION)) {
+            sender.sendMessage("You do not have permission to administer the reserve.");
+            return true;
+        }
+        if (args.length == 2 && args[1].equalsIgnoreCase("status")) {
+            sender.sendMessage("BlockStock reserve balance: "
+                    + format(economy.playerBalance(blockStockReserveTreasury).cents()));
+            return true;
+        }
+        if (args.length < 4 || !args[1].equalsIgnoreCase("fund")) {
+            sender.sendMessage("Usage: /economy reserve <status|fund <amount> <memo>>");
+            return true;
+        }
+        Money amount;
+        try {
+            amount = parseMoney(args[2]);
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Amount must be a positive amount with at most two decimal places.");
+            return true;
+        }
+        String memo = String.join(" ", Arrays.copyOfRange(args, 3, args.length)).trim();
+        if (memo.isEmpty()) {
+            sender.sendMessage("A reserve memo is required.");
+            return true;
+        }
+        try {
+            economy.fundBlockStockReserve(blockStockReserveTreasury, amount, memo);
+            sender.sendMessage("Allocated " + format(amount.cents()) + " from the treasury to the BlockStock reserve.");
+        } catch (RuntimeException exception) {
+            sender.sendMessage("Reserve allocation rejected: " + exception.getMessage());
         }
         return true;
     }
