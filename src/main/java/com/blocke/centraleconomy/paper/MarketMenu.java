@@ -110,9 +110,12 @@ public final class MarketMenu implements Listener {
 
     private void openConfirm(Player player, MarketListing listing) {
         ConfirmHolder holder = new ConfirmHolder(this, listing.id(), 1);
+        var charge = market.quoteBuyerCharge(listing.unitPrice(), 1);
         Inventory inventory = createInventory(holder, DETAIL_SIZE, "Confirm Market Purchase");
         inventory.setItem(11, actionItem(Material.LIME_WOOL, "Buy 1", List.of(
-                listing.material().name(), "Total: " + format(listing.unitPrice().cents()))));
+                listing.material().name(), "Item total: " + format(charge.itemTotal().cents()),
+                "Consumption tax: " + format(charge.consumptionTax().cents()),
+                "Total charged: " + format(charge.buyerTotal().cents()))));
         inventory.setItem(13, listingDisplay(listing));
         inventory.setItem(15, actionItem(Material.BARRIER, "Cancel", List.of()));
         player.openInventory(inventory);
@@ -130,7 +133,8 @@ public final class MarketMenu implements Listener {
         MarketPurchase purchase = market.buy(player.getUniqueId(), listingId, quantity);
         givePlainMaterial(player, listing.material(), quantity);
         player.sendMessage("Bought " + quantity + " " + listing.material().name() + " for "
-                + format(purchase.trade().totalPrice().cents()) + ".");
+                + format(purchase.buyerTotal().cents()) + " (including consumption tax "
+                + format(purchase.consumptionTax().cents()) + ").");
         open(player);
     }
 

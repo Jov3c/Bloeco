@@ -9,6 +9,7 @@ import com.blocke.centraleconomy.money.Money;
 import com.blocke.centraleconomy.paper.EconomyCommand;
 import com.blocke.centraleconomy.paper.MarketCommand;
 import com.blocke.centraleconomy.paper.MarketMenu;
+import com.blocke.centraleconomy.paper.PayCommand;
 import com.blocke.centraleconomy.paper.ProcurementMenu;
 import com.blocke.centraleconomy.vault.CentralEconomyVaultProvider;
 import org.bukkit.Material;
@@ -35,10 +36,11 @@ public class CentralEconomyPlugin extends JavaPlugin {
         saveResource("market.yml", false);
 
         ledger = new SqliteLedgerRepository(getDataFolder().toPath().resolve(getConfig().getString("database-file", "economy.db")));
-        EconomyService economy = new EconomyService(ledger, procurementTaxPercent());
+        EconomyService economy = new EconomyService(ledger, procurementTaxPercent(), transferFeePercent(), transferIncomeTaxPercent());
         ProcurementMenu menu = new ProcurementMenu(this, economy, loadProcurementItems());
         getCommand("economy").setExecutor(new EconomyCommand(economy, menu, blockStockReserveTreasury()));
-        MarketService market = new MarketService(ledger, new SqliteMarketRepository(ledger), marketFeePercent());
+        getCommand("pay").setExecutor(new PayCommand(economy));
+        MarketService market = new MarketService(ledger, new SqliteMarketRepository(ledger), marketFeePercent(), consumptionTaxPercent());
         MarketMenu marketMenu = new MarketMenu(this, market);
         getCommand("market").setExecutor(new MarketCommand(marketMenu));
         registerVaultProvider();
@@ -67,10 +69,26 @@ public class CentralEconomyPlugin extends JavaPlugin {
     }
 
     private int procurementTaxPercent() {
-        double configuredRate = getConfig().getDouble("procurement-income-tax-rate", 0.05d);
+        return wholePercent("procurement-income-tax-rate", 0.05d, 100, "procurement income tax");
+    }
+
+    private int transferFeePercent() {
+        return wholePercent("transfer-fee-rate", 0.01d, 100, "transfer fee");
+    }
+
+    private int transferIncomeTaxPercent() {
+        return wholePercent("transfer-income-tax-rate", 0.05d, 100, "transfer income tax");
+    }
+
+    private int consumptionTaxPercent() {
+        return wholePercent("market-consumption-tax-rate", 0.03d, 100, "market consumption tax");
+    }
+
+    private int wholePercent(String path, double defaultRate, int maximum, String label) {
+        double configuredRate = getConfig().getDouble(path, defaultRate);
         int percentage = (int) Math.round(configuredRate * 100.0d);
-        if (percentage < 0 || percentage > 100 || Math.abs(configuredRate - percentage / 100.0d) > 0.0000001d) {
-            throw new IllegalArgumentException("procurement-income-tax-rate must be a whole percentage expressed as a fraction");
+        if (percentage < 0 || percentage > maximum || Math.abs(configuredRate - percentage / 100.0d) > 0.0000001d) {
+            throw new IllegalArgumentException(path + " must be a whole percentage from 0 through " + maximum + " expressed as a fraction");
         }
         return percentage;
     }

@@ -2,7 +2,9 @@ package com.blocke.centraleconomy.paper;
 
 import com.blocke.centraleconomy.economy.EconomyService;
 import com.blocke.centraleconomy.economy.ProcurementItem;
+import com.blocke.centraleconomy.ledger.AccountId;
 import com.blocke.centraleconomy.ledger.SqliteLedgerRepository;
+import com.blocke.centraleconomy.ledger.TransactionType;
 import com.blocke.centraleconomy.money.Money;
 import org.bukkit.Material;
 import org.bukkit.plugin.Plugin;
@@ -106,6 +108,20 @@ class ProcurementMenuTest {
         UUID reserveId = UUID.fromString("00000000-0000-0000-0000-000000000098");
         assertEquals(5_000, service.treasuryBalance().cents());
         assertEquals(5_000, service.playerBalance(reserveId).cents());
+    }
+
+    @Test
+    void payCommandSettlesAnOnlinePlayerPaymentWithFeeAndIncomeTax() {
+        PlayerMock payer = server.addPlayer();
+        PlayerMock recipient = server.addPlayer();
+        repository.credit(AccountId.player(payer.getUniqueId()), Money.ofCents(10_100), TransactionType.ISSUE, "payer funds");
+        PayCommand command = new PayCommand(service);
+
+        assertTrue(command.onCommand(payer, null, "pay", new String[]{recipient.getName(), "100.00"}));
+
+        assertEquals(0, service.playerBalance(payer.getUniqueId()).cents());
+        assertEquals(9_500, service.playerBalance(recipient.getUniqueId()).cents());
+        assertEquals(600, service.treasuryBalance().cents());
     }
 
     private static int plainCount(PlayerMock player, Material material) {

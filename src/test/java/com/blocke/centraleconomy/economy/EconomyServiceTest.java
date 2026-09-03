@@ -2,6 +2,7 @@ package com.blocke.centraleconomy.economy;
 
 import com.blocke.centraleconomy.ledger.AccountId;
 import com.blocke.centraleconomy.ledger.SqliteLedgerRepository;
+import com.blocke.centraleconomy.ledger.TransactionType;
 import com.blocke.centraleconomy.money.Money;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -131,6 +132,33 @@ class EconomyServiceTest {
 
         assertEquals(100, service.treasuryBalance().cents());
         assertEquals(0, service.playerBalance(reserveTreasury).cents());
+        assertEquals(1, repository.entryCount());
+    }
+
+    @Test
+    void playerTransferChargesSenderFeeAndRecipientIncomeTaxInOneBatch() {
+        UUID recipient = UUID.randomUUID();
+        repository.credit(AccountId.player(player), Money.ofCents(100_000), TransactionType.ISSUE, "sender funds");
+
+        service.transferPlayerFunds(player, recipient, Money.ofCents(10_000), "payment for crops");
+
+        assertEquals(89_900, service.playerBalance(player).cents());
+        assertEquals(9_500, service.playerBalance(recipient).cents());
+        assertEquals(600, service.treasuryBalance().cents());
+        assertEquals(4, repository.entryCount());
+    }
+
+    @Test
+    void playerTransferRejectsAmountPlusFeeWhenSenderHasInsufficientFunds() {
+        UUID recipient = UUID.randomUUID();
+        repository.credit(AccountId.player(player), Money.ofCents(10_099), TransactionType.ISSUE, "sender funds");
+
+        assertThrows(IllegalStateException.class, () ->
+                service.transferPlayerFunds(player, recipient, Money.ofCents(10_000), "payment for crops"));
+
+        assertEquals(10_099, service.playerBalance(player).cents());
+        assertEquals(0, service.playerBalance(recipient).cents());
+        assertEquals(0, service.treasuryBalance().cents());
         assertEquals(1, repository.entryCount());
     }
 

@@ -52,21 +52,21 @@ class MarketServiceTest {
         assertEquals(500, purchase.trade().totalPrice().cents());
         assertEquals(10, purchase.trade().fee().cents());
         assertEquals(490, purchase.sellerNet().cents());
-        assertEquals(9_500, ledger.balance(AccountId.player(buyer)).cents());
+        assertEquals(9_485, ledger.balance(AccountId.player(buyer)).cents());
         assertEquals(490, ledger.balance(AccountId.player(seller)).cents());
-        assertEquals(10, ledger.balance(AccountId.treasury()).cents());
+        assertEquals(25, ledger.balance(AccountId.treasury()).cents());
         assertEquals(5, marketRepository.findListing(listing.id()).orElseThrow().remainingQuantity());
-        assertEquals(3, ledger.entryCount());
+        assertEquals(4, ledger.entryCount());
     }
 
     @Test
     void insufficientBuyerFundsLeaveMoneyAndListingUnchanged() {
-        ledger.credit(AccountId.player(buyer), Money.ofCents(499), TransactionType.ISSUE, "limited funds");
+        ledger.credit(AccountId.player(buyer), Money.ofCents(514), TransactionType.ISSUE, "limited funds");
         MarketListing listing = service.createListing(seller, Material.WHEAT, 10, Money.ofCents(100));
 
         assertThrows(IllegalStateException.class, () -> service.buy(buyer, listing.id(), 5));
 
-        assertEquals(499, ledger.balance(AccountId.player(buyer)).cents());
+        assertEquals(514, ledger.balance(AccountId.player(buyer)).cents());
         assertEquals(0, ledger.balance(AccountId.player(seller)).cents());
         assertEquals(0, ledger.balance(AccountId.treasury()).cents());
         assertEquals(10, marketRepository.findListing(listing.id()).orElseThrow().remainingQuantity());
@@ -89,16 +89,17 @@ class MarketServiceTest {
     }
 
     @Test
-    void zeroFeePurchaseOmitsTheFeePostingInsteadOfCreatingAZeroAmountEntry() {
+    void zeroMarketFeePurchaseStillChargesConsumptionTaxWithoutZeroAmountEntries() {
         MarketService zeroFeeService = new MarketService(ledger, marketRepository, 0);
-        ledger.credit(AccountId.player(buyer), Money.ofCents(500), TransactionType.ISSUE, "buyer funds");
+        ledger.credit(AccountId.player(buyer), Money.ofCents(515), TransactionType.ISSUE, "buyer funds");
         MarketListing listing = zeroFeeService.createListing(seller, Material.WHEAT, 5, Money.ofCents(100));
 
         zeroFeeService.buy(buyer, listing.id(), 5);
 
+        assertEquals(0, ledger.balance(AccountId.player(buyer)).cents());
         assertEquals(500, ledger.balance(AccountId.player(seller)).cents());
-        assertEquals(0, ledger.balance(AccountId.treasury()).cents());
-        assertEquals(2, ledger.entryCount());
+        assertEquals(15, ledger.balance(AccountId.treasury()).cents());
+        assertEquals(3, ledger.entryCount());
     }
 
     @Test

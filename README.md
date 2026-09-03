@@ -8,7 +8,9 @@ Vault is optional. When its plugin is enabled, CentralEconomy registers an `Econ
 
 ## Market
 
-`/market` browses active player listings. Click a listing and confirm to buy one plain Material item; the menu checks inventory capacity before it settles the purchase and delivers the item only after settlement. `/market sell <price>` lists the plain stack in your main hand at the supplied per-item price, while `/market mine` shows your active listings and lets you cancel them to return the remaining items. The default 2% fee is configured in `market.yml` and is credited to the treasury.
+`/market` browses active player listings. Click a listing and confirm to buy one plain Material item; the menu checks inventory capacity before it settles the purchase and delivers the item only after settlement. `/market sell <price>` lists the plain stack in your main hand at the supplied per-item price, while `/market mine` shows your active listings and lets you cancel them to return the remaining items. The default 2% market fee and 3% buyer consumption tax are credited to the treasury.
+
+`/pay <online-player> <amount>` transfers money to an online player. The payer additionally bears the configured transfer fee (default 1%); the recipient's gross receipt is subject to configured personal income tax (default 5%). The recipient and payer receive the net/total breakdown after the atomic settlement.
 
 ## 与 Blockeco / BlockStock 联动
 

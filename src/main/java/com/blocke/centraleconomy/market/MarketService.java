@@ -13,17 +13,31 @@ import java.util.UUID;
 
 /** Market use cases that atomically settle listing quantity and ledger postings. */
 public final class MarketService {
+    private static final int DEFAULT_CONSUMPTION_TAX_RATE_PERCENT = 3;
     private final LedgerRepository ledger;
     private final MarketRepository marketRepository;
     private final int feeRatePercent;
+    private final int consumptionTaxRatePercent;
 
     public MarketService(LedgerRepository ledger, MarketRepository marketRepository, int feeRatePercent) {
+        this(ledger, marketRepository, feeRatePercent, DEFAULT_CONSUMPTION_TAX_RATE_PERCENT);
+    }
+
+    public MarketService(
+            LedgerRepository ledger,
+            MarketRepository marketRepository,
+            int feeRatePercent,
+            int consumptionTaxRatePercent) {
         this.ledger = Objects.requireNonNull(ledger, "ledger");
         this.marketRepository = Objects.requireNonNull(marketRepository, "marketRepository");
         if (feeRatePercent < 0 || feeRatePercent > 20) {
             throw new IllegalArgumentException("market fee rate must be between 0 and 20 percent");
         }
+        if (consumptionTaxRatePercent < 0 || consumptionTaxRatePercent > 100) {
+            throw new IllegalArgumentException("market consumption tax rate must be between 0 and 100 percent");
+        }
         this.feeRatePercent = feeRatePercent;
+        this.consumptionTaxRatePercent = consumptionTaxRatePercent;
     }
 
     public MarketListing createListing(UUID sellerId, Material material, int quantity, Money unitPrice) {
@@ -52,8 +66,10 @@ public final class MarketService {
             throw new IllegalArgumentException("seller cannot buy their own listing");
         }
 
-        Money total = totalFor(listing.unitPrice(), quantity);
+        MarketCharge charge = quoteBuyerCharge(listing.unitPrice(), quantity);
+        Money total = charge.itemTotal();
         Money fee = feeFor(total);
+        Money consumptionTax = charge.consumptionTax();
         Money sellerNet = Money.ofCents(total.cents() - fee.cents());
         List<LedgerRepository.Posting> postings = new ArrayList<>();
         postings.add(new LedgerRepository.Posting(
@@ -62,11 +78,27 @@ public final class MarketService {
         if (fee.cents() > 0) {
             postings.add(new LedgerRepository.Posting(
                     AccountId.player(buyerId), AccountId.treasury(), fee,
-                    TransactionType.TRANSFER, "market fee " + listingId));
+                    TransactionType.TRANSFER_FEE, "market fee " + listingId));
+        }
+        if (consumptionTax.cents() > 0) {
+            postings.add(new LedgerRepository.Posting(
+                    AccountId.player(buyerId), AccountId.treasury(), consumptionTax,
+                    TransactionType.CONSUMPTION_TAX, "market consumption tax " + listingId));
         }
 
         MarketTrade trade = marketRepository.settlePurchase(listingId, buyerId, quantity, feeRatePercent, postings);
-        return new MarketPurchase(trade, sellerNet);
+        return new MarketPurchase(trade, sellerNet, consumptionTax, charge.buyerTotal());
+    }
+
+    /** Quotes the tax-inclusive buyer cost without reserving money or inventory. */
+    public MarketCharge quoteBuyerCharge(Money unitPrice, int quantity) {
+        Objects.requireNonNull(unitPrice, "unitPrice");
+        if (quantity < 1) {
+            throw new IllegalArgumentException("purchase quantity must be positive");
+        }
+        Money total = totalFor(unitPrice, quantity);
+        Money consumptionTax = consumptionTaxFor(total);
+        return new MarketCharge(total, consumptionTax, add(total, consumptionTax));
     }
 
     public MarketResult cancel(UUID sellerId, UUID listingId) {
@@ -88,10 +120,26 @@ public final class MarketService {
     }
 
     private Money feeFor(Money total) {
+        return percentageOf(total, feeRatePercent, "market fee");
+    }
+
+    private Money consumptionTaxFor(Money total) {
+        return percentageOf(total, consumptionTaxRatePercent, "market consumption tax");
+    }
+
+    private static Money percentageOf(Money total, int ratePercent, String label) {
         try {
-            return Money.ofCents(Math.multiplyExact(total.cents(), feeRatePercent) / 100);
+            return Money.ofCents(Math.multiplyExact(total.cents(), ratePercent) / 100);
         } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("market fee exceeds supported range", exception);
+            throw new IllegalArgumentException(label + " exceeds supported range", exception);
+        }
+    }
+
+    private static Money add(Money first, Money second) {
+        try {
+            return Money.ofCents(Math.addExact(first.cents(), second.cents()));
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException("market buyer total exceeds supported range", exception);
         }
     }
 }

@@ -81,7 +81,7 @@ class MarketMenuTest {
         PlayerMock seller = server.addPlayer();
         PlayerMock buyer = server.addPlayer();
         MarketListing listing = market.createListing(seller.getUniqueId(), Material.WHEAT, 2, Money.ofCents(100));
-        ledger.credit(AccountId.player(buyer.getUniqueId()), Money.ofCents(100), TransactionType.ISSUE, "buyer funds");
+        ledger.credit(AccountId.player(buyer.getUniqueId()), Money.ofCents(103), TransactionType.ISSUE, "buyer funds");
 
         menu.open(buyer);
         InventoryClickEvent chooseListing = click(buyer, 0);

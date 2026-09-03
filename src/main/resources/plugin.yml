@@ -8,6 +8,9 @@ commands:
   economy:
     description: Opens treasury procurement and economy commands.
     usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>|reserve <status|fund <amount> <memo>>]
+  pay:
+    description: Pays an online player through CentralEconomy.
+    usage: /pay <online-player> <amount>
   market:
     description: Opens the player commodity market.
     usage: /market [sell <price>|mine]

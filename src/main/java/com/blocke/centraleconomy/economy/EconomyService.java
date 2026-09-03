@@ -14,13 +14,25 @@ import java.util.UUID;
 public final class EconomyService {
     private final LedgerRepository ledger;
     private final int procurementIncomeTaxRatePercent;
+    private final int transferFeeRatePercent;
+    private final int transferIncomeTaxRatePercent;
 
     public EconomyService(LedgerRepository ledger, int procurementIncomeTaxRatePercent) {
+        this(ledger, procurementIncomeTaxRatePercent, 1, 5);
+    }
+
+    public EconomyService(
+            LedgerRepository ledger,
+            int procurementIncomeTaxRatePercent,
+            int transferFeeRatePercent,
+            int transferIncomeTaxRatePercent) {
         this.ledger = Objects.requireNonNull(ledger, "ledger");
-        if (procurementIncomeTaxRatePercent < 0 || procurementIncomeTaxRatePercent > 100) {
-            throw new IllegalArgumentException("procurement income tax rate must be between 0 and 100");
-        }
+        validateRate(procurementIncomeTaxRatePercent, "procurement income tax");
+        validateRate(transferFeeRatePercent, "transfer fee");
+        validateRate(transferIncomeTaxRatePercent, "transfer income tax");
         this.procurementIncomeTaxRatePercent = procurementIncomeTaxRatePercent;
+        this.transferFeeRatePercent = transferFeeRatePercent;
+        this.transferIncomeTaxRatePercent = transferIncomeTaxRatePercent;
     }
 
     public synchronized void issueToTreasury(Money amount, String memo) {
@@ -42,6 +54,46 @@ public final class EconomyService {
         }
         ledger.transfer(AccountId.treasury(), AccountId.player(reserveTreasury), amount,
                 TransactionType.TREASURY_ALLOCATION, memo);
+    }
+
+    /** Transfers player funds while recording the sender fee and recipient income tax. */
+    public synchronized PlayerTransferResult transferPlayerFunds(UUID sender, UUID recipient, Money amount, String memo) {
+        Objects.requireNonNull(sender, "sender");
+        Objects.requireNonNull(recipient, "recipient");
+        Objects.requireNonNull(amount, "amount");
+        if (sender.equals(recipient)) {
+            throw new IllegalArgumentException("cannot transfer money to yourself");
+        }
+        if (amount.cents() == 0) {
+            throw new IllegalArgumentException("transfer amount must be positive");
+        }
+
+        Money fee = percentageOf(amount, transferFeeRatePercent, "transfer fee");
+        Money incomeTax = percentageOf(amount, transferIncomeTaxRatePercent, "transfer income tax");
+        long senderDebit = add(amount.cents(), fee.cents(), "transfer debit");
+        if (ledger.balance(AccountId.player(sender)).cents() < senderDebit) {
+            throw new IllegalStateException("insufficient funds for transfer amount plus fee");
+        }
+
+        List<LedgerRepository.Posting> postings = new ArrayList<>();
+        long recipientNet = amount.cents() - incomeTax.cents();
+        if (recipientNet > 0) {
+            postings.add(new LedgerRepository.Posting(
+                    AccountId.player(sender), AccountId.player(recipient), Money.ofCents(recipientNet),
+                    TransactionType.PLAYER_TRANSFER, memo));
+        }
+        if (incomeTax.cents() > 0) {
+            postings.add(new LedgerRepository.Posting(
+                    AccountId.player(sender), AccountId.treasury(), incomeTax,
+                    TransactionType.PERSONAL_INCOME_TAX, memo + " income tax"));
+        }
+        if (fee.cents() > 0) {
+            postings.add(new LedgerRepository.Posting(
+                    AccountId.player(sender), AccountId.treasury(), fee,
+                    TransactionType.TRANSFER_FEE, memo + " transfer fee"));
+        }
+        ledger.transferBatch(postings);
+        return new PlayerTransferResult(amount, fee, incomeTax, Money.ofCents(recipientNet), Money.ofCents(senderDebit));
     }
 
     public synchronized ProcurementQuote quoteProcurement(UUID playerId, ProcurementItem item, int quantity) {
@@ -112,14 +164,32 @@ public final class EconomyService {
     }
 
     private Money taxFor(Money gross) {
-        long fullHundreds = gross.cents() / 100;
-        long remainder = gross.cents() % 100;
+        return percentageOf(gross, procurementIncomeTaxRatePercent, "procurement tax");
+    }
+
+    private static Money percentageOf(Money amount, int ratePercent, String label) {
+        long fullHundreds = amount.cents() / 100;
+        long remainder = amount.cents() % 100;
         try {
-            long wholeTax = Math.multiplyExact(fullHundreds, procurementIncomeTaxRatePercent);
-            long remainderTax = (remainder * procurementIncomeTaxRatePercent) / 100;
+            long wholeTax = Math.multiplyExact(fullHundreds, ratePercent);
+            long remainderTax = (remainder * ratePercent) / 100;
             return Money.ofCents(Math.addExact(wholeTax, remainderTax));
         } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("procurement tax exceeds supported range", exception);
+            throw new IllegalArgumentException(label + " exceeds supported range", exception);
+        }
+    }
+
+    private static long add(long first, long second, String label) {
+        try {
+            return Math.addExact(first, second);
+        } catch (ArithmeticException exception) {
+            throw new IllegalArgumentException(label + " exceeds supported range", exception);
+        }
+    }
+
+    private static void validateRate(int ratePercent, String label) {
+        if (ratePercent < 0 || ratePercent > 100) {
+            throw new IllegalArgumentException(label + " rate must be between 0 and 100");
         }
     }
 }
