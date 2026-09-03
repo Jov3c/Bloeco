@@ -4,6 +4,7 @@ out/
 *.iml
 .idea/
 .superpowers/
+.worktrees/
 run/
 *.db
 *.db-shm
