@@ -162,4 +162,20 @@ class EconomyServiceTest {
         assertEquals(1, repository.entryCount());
     }
 
+    @Test
+    void usesTheLiveTaxPolicyForSettlementsAfterAnAdministratorChangesIt() {
+        TaxPolicy policy = new TaxPolicy(5, 1, 5, 3);
+        service = new EconomyService(repository, policy);
+        UUID recipient = UUID.randomUUID();
+        repository.credit(AccountId.player(player), Money.ofCents(11_000), TransactionType.ISSUE, "payer funds");
+        policy.setRate(TaxType.TRANSFER_FEE, 10);
+        policy.setRate(TaxType.TRANSFER_INCOME, 20);
+
+        service.transferPlayerFunds(player, recipient, Money.ofCents(10_000), "changed tax rates");
+
+        assertEquals(0, service.playerBalance(player).cents());
+        assertEquals(8_000, service.playerBalance(recipient).cents());
+        assertEquals(3_000, service.treasuryBalance().cents());
+    }
+
 }

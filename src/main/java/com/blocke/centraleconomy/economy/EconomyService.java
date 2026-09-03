@@ -13,9 +13,7 @@ import java.util.UUID;
 /** Domain use cases for issuing, burning, and treasury procurement. */
 public final class EconomyService {
     private final LedgerRepository ledger;
-    private final int procurementIncomeTaxRatePercent;
-    private final int transferFeeRatePercent;
-    private final int transferIncomeTaxRatePercent;
+    private final TaxPolicy taxPolicy;
 
     public EconomyService(LedgerRepository ledger, int procurementIncomeTaxRatePercent) {
         this(ledger, procurementIncomeTaxRatePercent, 1, 5);
@@ -26,13 +24,13 @@ public final class EconomyService {
             int procurementIncomeTaxRatePercent,
             int transferFeeRatePercent,
             int transferIncomeTaxRatePercent) {
+        this(ledger, new TaxPolicy(procurementIncomeTaxRatePercent, transferFeeRatePercent,
+                transferIncomeTaxRatePercent, 3));
+    }
+
+    public EconomyService(LedgerRepository ledger, TaxPolicy taxPolicy) {
         this.ledger = Objects.requireNonNull(ledger, "ledger");
-        validateRate(procurementIncomeTaxRatePercent, "procurement income tax");
-        validateRate(transferFeeRatePercent, "transfer fee");
-        validateRate(transferIncomeTaxRatePercent, "transfer income tax");
-        this.procurementIncomeTaxRatePercent = procurementIncomeTaxRatePercent;
-        this.transferFeeRatePercent = transferFeeRatePercent;
-        this.transferIncomeTaxRatePercent = transferIncomeTaxRatePercent;
+        this.taxPolicy = Objects.requireNonNull(taxPolicy, "taxPolicy");
     }
 
     public synchronized void issueToTreasury(Money amount, String memo) {
@@ -68,8 +66,8 @@ public final class EconomyService {
             throw new IllegalArgumentException("transfer amount must be positive");
         }
 
-        Money fee = percentageOf(amount, transferFeeRatePercent, "transfer fee");
-        Money incomeTax = percentageOf(amount, transferIncomeTaxRatePercent, "transfer income tax");
+        Money fee = percentageOf(amount, taxPolicy.rate(TaxType.TRANSFER_FEE), "transfer fee");
+        Money incomeTax = percentageOf(amount, taxPolicy.rate(TaxType.TRANSFER_INCOME), "transfer income tax");
         long senderDebit = add(amount.cents(), fee.cents(), "transfer debit");
         if (ledger.balance(AccountId.player(sender)).cents() < senderDebit) {
             throw new IllegalStateException("insufficient funds for transfer amount plus fee");
@@ -164,7 +162,7 @@ public final class EconomyService {
     }
 
     private Money taxFor(Money gross) {
-        return percentageOf(gross, procurementIncomeTaxRatePercent, "procurement tax");
+        return percentageOf(gross, taxPolicy.rate(TaxType.PROCUREMENT_INCOME), "procurement tax");
     }
 
     private static Money percentageOf(Money amount, int ratePercent, String label) {
@@ -187,9 +185,4 @@ public final class EconomyService {
         }
     }
 
-    private static void validateRate(int ratePercent, String label) {
-        if (ratePercent < 0 || ratePercent > 100) {
-            throw new IllegalArgumentException(label + " rate must be between 0 and 100");
-        }
-    }
 }

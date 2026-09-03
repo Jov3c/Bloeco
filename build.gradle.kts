@@ -42,11 +42,11 @@ tasks.test {
 }
 
 tasks.jar {
-    archiveBaseName.set("CentralEconomy")
+    archiveBaseName.set("Bloeco")
     archiveClassifier.set("plain")
 }
 
 tasks.shadowJar {
-    archiveBaseName.set("CentralEconomy")
+    archiveBaseName.set("Bloeco")
     archiveClassifier.set("")
 }

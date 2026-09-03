@@ -9,9 +9,14 @@ transfer-fee-rate: 0.01
 transfer-income-tax-rate: 0.05
 # Player-market buyers pay this tax on top of the listed price and market fee.
 market-consumption-tax-rate: 0.03
+tax-administrators:
+  # A permission node from your permissions plugin. This can be replaced freely.
+  permission: "bloeco.tax-admin"
+  # UUIDs here receive tax administration even without the permission node.
+  player-uuids: []
 database-file: economy.db
 market-file: market.yml
-blockstock:
-  # Dedicated non-player reserve used only to seed BlockStock bluechip liquidity.
-  # It must match BlockStock's market.bluechip-reserve-treasury-uuid setting.
+bloeco-stock:
+  # Dedicated non-player reserve used only to seed Bloeco-Stock bluechip liquidity.
+  # It must match Bloeco-Stock's market.bluechip-reserve-treasury-uuid setting.
   bluechip-reserve-treasury-uuid: "00000000-0000-0000-0000-000000000098"

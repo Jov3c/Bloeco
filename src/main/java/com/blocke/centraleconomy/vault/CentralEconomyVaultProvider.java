@@ -13,9 +13,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Vault boundary backed only by the authoritative CentralEconomy ledger. */
+/** Vault boundary backed only by the authoritative Bloeco ledger. */
 public final class CentralEconomyVaultProvider implements Economy {
-    private static final String PROVIDER_NAME = "CentralEconomy";
+    private static final String PROVIDER_NAME = "Bloeco";
 
     private final LedgerRepository ledger;
     private final String currencyNameSingular;

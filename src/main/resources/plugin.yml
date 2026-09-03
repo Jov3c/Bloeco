@@ -1,20 +1,20 @@
-name: CentralEconomy
+name: Bloeco
 version: 1.0.0-SNAPSHOT
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 softdepend: [Vault]
-loadbefore: [BlockStock]
+loadbefore: [Bloeco-Stock, BlockStock]
 commands:
-  economy:
-    description: Opens treasury procurement and economy commands.
-    usage: /economy [balance [player]|report|treasury <issue|burn> <amount> <memo>|reserve <status|fund <amount> <memo>>]
+  bloeco:
+    description: Opens the Bloeco economy centre.
+    aliases: [economy]
   pay:
-    description: Pays an online player through CentralEconomy.
+    description: Legacy quick payment command. Bloeco GUI is recommended.
     usage: /pay <online-player> <amount>
   market:
     description: Opens the player commodity market.
     usage: /market [sell <price>|mine]
 permissions:
-  centraleconomy.admin:
-    description: Allows administration of the CentralEconomy treasury and configuration.
+  bloeco.tax-admin:
+    description: Allows Bloeco tax and treasury administration unless overridden in config.
     default: op

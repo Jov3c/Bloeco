@@ -12,7 +12,7 @@ import java.math.RoundingMode;
 import java.util.Locale;
 import java.util.Objects;
 
-/** Command boundary for the player-to-player material market. */
+/** Legacy command boundary for the GUI-first player-to-player material market. */
 public final class MarketCommand implements CommandExecutor {
     private final MarketMenu menu;
 
@@ -45,7 +45,7 @@ public final class MarketCommand implements CommandExecutor {
             }
             return true;
         }
-        sender.sendMessage("Usage: /market [sell <price>|mine]");
+        sender.sendMessage("请使用 /bloeco 打开市场 GUI；兼容用法：/market [sell <price>|mine]");
         return true;
     }
 

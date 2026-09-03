@@ -3,6 +3,8 @@ package com.blocke.centraleconomy.market;
 import com.blocke.centraleconomy.ledger.AccountId;
 import com.blocke.centraleconomy.ledger.LedgerRepository;
 import com.blocke.centraleconomy.ledger.TransactionType;
+import com.blocke.centraleconomy.economy.TaxPolicy;
+import com.blocke.centraleconomy.economy.TaxType;
 import com.blocke.centraleconomy.money.Money;
 import org.bukkit.Material;
 
@@ -17,10 +19,10 @@ public final class MarketService {
     private final LedgerRepository ledger;
     private final MarketRepository marketRepository;
     private final int feeRatePercent;
-    private final int consumptionTaxRatePercent;
+    private final TaxPolicy taxPolicy;
 
     public MarketService(LedgerRepository ledger, MarketRepository marketRepository, int feeRatePercent) {
-        this(ledger, marketRepository, feeRatePercent, DEFAULT_CONSUMPTION_TAX_RATE_PERCENT);
+        this(ledger, marketRepository, feeRatePercent, new TaxPolicy(5, 1, 5, DEFAULT_CONSUMPTION_TAX_RATE_PERCENT));
     }
 
     public MarketService(
@@ -28,16 +30,22 @@ public final class MarketService {
             MarketRepository marketRepository,
             int feeRatePercent,
             int consumptionTaxRatePercent) {
+        this(ledger, marketRepository, feeRatePercent,
+                new TaxPolicy(5, 1, 5, consumptionTaxRatePercent));
+    }
+
+    public MarketService(
+            LedgerRepository ledger,
+            MarketRepository marketRepository,
+            int feeRatePercent,
+            TaxPolicy taxPolicy) {
         this.ledger = Objects.requireNonNull(ledger, "ledger");
         this.marketRepository = Objects.requireNonNull(marketRepository, "marketRepository");
         if (feeRatePercent < 0 || feeRatePercent > 20) {
             throw new IllegalArgumentException("market fee rate must be between 0 and 20 percent");
         }
-        if (consumptionTaxRatePercent < 0 || consumptionTaxRatePercent > 100) {
-            throw new IllegalArgumentException("market consumption tax rate must be between 0 and 100 percent");
-        }
         this.feeRatePercent = feeRatePercent;
-        this.consumptionTaxRatePercent = consumptionTaxRatePercent;
+        this.taxPolicy = Objects.requireNonNull(taxPolicy, "taxPolicy");
     }
 
     public MarketListing createListing(UUID sellerId, Material material, int quantity, Money unitPrice) {
@@ -124,7 +132,7 @@ public final class MarketService {
     }
 
     private Money consumptionTaxFor(Money total) {
-        return percentageOf(total, consumptionTaxRatePercent, "market consumption tax");
+        return percentageOf(total, taxPolicy.rate(TaxType.MARKET_CONSUMPTION), "market consumption tax");
     }
 
     private static Money percentageOf(Money total, int ratePercent, String label) {

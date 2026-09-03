@@ -17,7 +17,7 @@ import java.util.UUID;
 
 /** Player and administrator command boundary for the central economy. */
 public final class EconomyCommand implements CommandExecutor {
-    private static final String ADMIN_PERMISSION = "centraleconomy.admin";
+    private static final String ADMIN_PERMISSION = "bloeco.tax-admin";
     private static final UUID DEFAULT_BLOCKSTOCK_RESERVE_TREASURY =
             UUID.fromString("00000000-0000-0000-0000-000000000098");
 
@@ -39,7 +39,7 @@ public final class EconomyCommand implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
             if (!(sender instanceof Player player)) {
-                sender.sendMessage("Only players can open the procurement menu.");
+                sender.sendMessage("Only players can open the Bloeco menu.");
                 return true;
             }
             menu.open(player);
@@ -61,7 +61,7 @@ public final class EconomyCommand implements CommandExecutor {
         } else if (args.length == 2) {
             player = Bukkit.getPlayerExact(args[1]);
         } else {
-            sender.sendMessage("Usage: /economy balance [player]");
+        sender.sendMessage("Usage: /bloeco (GUI recommended)");
             return true;
         }
         if (player == null) {

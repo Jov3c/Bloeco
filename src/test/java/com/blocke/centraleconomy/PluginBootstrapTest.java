@@ -28,6 +28,6 @@ class PluginBootstrapTest {
         assertTrue(plugin.getDataFolder().toPath().resolve("config.yml").toFile().isFile());
         assertTrue(plugin.getDataFolder().toPath().resolve("procurement.yml").toFile().isFile());
         assertTrue(plugin.getDataFolder().toPath().resolve("market.yml").toFile().isFile());
-        assertNotNull(plugin.getCommand("market"));
+        assertNotNull(plugin.getCommand("bloeco"));
     }
 }

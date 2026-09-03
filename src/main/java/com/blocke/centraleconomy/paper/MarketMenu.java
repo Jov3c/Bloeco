@@ -41,35 +41,38 @@ public final class MarketMenu implements Listener {
     public void open(Player player) {
         Objects.requireNonNull(player, "player");
         BrowseHolder holder = new BrowseHolder(this);
-        Inventory inventory = createInventory(holder, BROWSE_SIZE, "Central Market");
+        Inventory inventory = createInventory(holder, BROWSE_SIZE, "Bloeco 玩家市场");
         int slot = 0;
         for (MarketListing listing : market.browse()) {
-            if (slot >= BROWSE_SIZE) {
+            if (slot >= 45) {
                 break;
             }
             holder.put(slot, listing);
             inventory.setItem(slot, listingDisplay(listing));
             slot++;
         }
+        inventory.setItem(47, actionItem(Material.BOOK, "我的上架", List.of("查看并撤销自己的上架")));
+        inventory.setItem(49, actionItem(Material.GOLD_INGOT, "上架主手物品", List.of("不需要输入指令", "点击后选择单价")));
         player.openInventory(inventory);
     }
 
     public void openMine(Player player) {
         Objects.requireNonNull(player, "player");
         MineHolder holder = new MineHolder(this);
-        Inventory inventory = createInventory(holder, BROWSE_SIZE, "My Market Listings");
+        Inventory inventory = createInventory(holder, BROWSE_SIZE, "Bloeco 我的上架");
         int slot = 0;
         for (MarketListing listing : market.browse()) {
             if (!listing.sellerId().equals(player.getUniqueId())) {
                 continue;
             }
-            if (slot >= BROWSE_SIZE) {
+            if (slot >= 45) {
                 break;
             }
             holder.put(slot, listing);
             inventory.setItem(slot, mineDisplay(listing));
             slot++;
         }
+        inventory.setItem(49, actionItem(Material.ARROW, "返回市场", List.of("浏览所有上架")));
         player.openInventory(inventory);
     }
 
@@ -111,13 +114,31 @@ public final class MarketMenu implements Listener {
     private void openConfirm(Player player, MarketListing listing) {
         ConfirmHolder holder = new ConfirmHolder(this, listing.id(), 1);
         var charge = market.quoteBuyerCharge(listing.unitPrice(), 1);
-        Inventory inventory = createInventory(holder, DETAIL_SIZE, "Confirm Market Purchase");
+        Inventory inventory = createInventory(holder, DETAIL_SIZE, "Bloeco 确认购买");
         inventory.setItem(11, actionItem(Material.LIME_WOOL, "Buy 1", List.of(
                 listing.material().name(), "Item total: " + format(charge.itemTotal().cents()),
                 "Consumption tax: " + format(charge.consumptionTax().cents()),
                 "Total charged: " + format(charge.buyerTotal().cents()))));
         inventory.setItem(13, listingDisplay(listing));
         inventory.setItem(15, actionItem(Material.BARRIER, "Cancel", List.of()));
+        player.openInventory(inventory);
+    }
+
+    private void openListingPrices(Player player) {
+        ItemStack held = player.getInventory().getItemInMainHand();
+        if (!isPlainMaterial(held, held.getType())) {
+            throw new IllegalArgumentException("请在主手持有一组普通物品再上架");
+        }
+        ListingPriceHolder holder = new ListingPriceHolder(this);
+        Inventory inventory = createInventory(holder, DETAIL_SIZE, "Bloeco 上架 - 选择单价");
+        Money[] prices = {Money.ofCents(100), Money.ofCents(1_000), Money.ofCents(10_000), Money.ofCents(100_000)};
+        for (int index = 0; index < prices.length; index++) {
+            int slot = 10 + index * 2;
+            holder.put(slot, prices[index]);
+            inventory.setItem(slot, actionItem(Material.EMERALD, "单价 " + format(prices[index].cents()), List.of(
+                    "将上架主手的 " + held.getAmount() + " 个 " + held.getType().name(), "点击确认上架")));
+        }
+        inventory.setItem(22, actionItem(Material.ARROW, "返回市场", List.of("不作任何上架")));
         player.openInventory(inventory);
     }
 
@@ -165,6 +186,10 @@ public final class MarketMenu implements Listener {
                 MarketListing listing = browse.listingAt(event.getRawSlot());
                 if (listing != null) {
                     openConfirm(player, listing);
+                } else if (event.getRawSlot() == 47) {
+                    openMine(player);
+                } else if (event.getRawSlot() == 49) {
+                    openListingPrices(player);
                 }
             } else if (holder instanceof ConfirmHolder confirm && event.getRawSlot() == 11) {
                 buy(player, confirm.listingId, confirm.quantity);
@@ -174,6 +199,20 @@ public final class MarketMenu implements Listener {
                 MarketListing listing = mine.listingAt(event.getRawSlot());
                 if (listing != null) {
                     cancel(player, listing);
+                } else if (event.getRawSlot() == 49) {
+                    open(player);
+                }
+            } else if (holder instanceof ListingPriceHolder prices) {
+                if (event.getRawSlot() == 22) {
+                    open(player);
+                } else {
+                    Money unitPrice = prices.priceAt(event.getRawSlot());
+                    if (unitPrice != null) {
+                        MarketListing listing = createHeldListing(player, unitPrice);
+                        player.sendMessage("已上架 " + listing.remainingQuantity() + " 个 " + listing.material().name()
+                                + "，单价 " + format(listing.unitPrice().cents()) + "。");
+                        openMine(player);
+                    }
                 }
             }
         } catch (RuntimeException exception) {
@@ -352,6 +391,22 @@ public final class MarketMenu implements Listener {
             super(menu);
             this.listingId = listingId;
             this.quantity = quantity;
+        }
+    }
+
+    private static final class ListingPriceHolder extends MarketHolder {
+        private final Map<Integer, Money> prices = new LinkedHashMap<>();
+
+        private ListingPriceHolder(MarketMenu menu) {
+            super(menu);
+        }
+
+        private void put(int slot, Money price) {
+            prices.put(slot, price);
+        }
+
+        private Money priceAt(int slot) {
+            return prices.get(slot);
         }
     }
 }
