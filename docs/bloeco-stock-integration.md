@@ -4,7 +4,7 @@
 
 ## 边界
 
-- **Bloeco** 是唯一的玩家货币、税收、国库和 Vault `Economy` 提供者；账本位于 `plugins/Bloeco/economy.db`。
+- **Bloeco** 是唯一的玩家货币、税收、国库和 Vault `Economy` 提供者；它不处理商品或商店业务，账本位于 `plugins/Bloeco/economy.db`。
 - **Bloeco-Stock** 负责公司、证券现金、持仓、订单、成交与托管；它只能经 Vault 读写玩家钱包，不能读取或修改 Bloeco SQLite 文件。
 - Vault 金额固定两位小数；非有限、负数或无法精确表示的金额必须失败关闭。
 

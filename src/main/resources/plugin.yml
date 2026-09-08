@@ -11,9 +11,6 @@ commands:
   pay:
     description: Legacy quick payment command. Bloeco GUI is recommended.
     usage: /pay <online-player> <amount>
-  market:
-    description: Opens the player commodity market.
-    usage: /market [sell <price>|mine]
 permissions:
   bloeco.tax-admin:
     description: Allows Bloeco tax and treasury administration unless overridden in config.

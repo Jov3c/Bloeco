@@ -73,7 +73,7 @@ public final class SqliteLedgerRepository implements LedgerRepository {
     }
 
     /**
-     * Runs market persistence and ledger postings against this repository's single SQLite transaction.
+     * Runs a caller-owned SQLite transaction together with validated ledger postings.
      * Callers must use {@link SqlTransaction#applyLedgerPostings(List)} for every monetary mutation.
      */
     public synchronized <T> T inTransaction(SqlWork<T> work) {
@@ -110,7 +110,7 @@ public final class SqliteLedgerRepository implements LedgerRepository {
         T run(SqlTransaction transaction) throws SQLException;
     }
 
-    /** A ledger-owned SQLite transaction that permits market rows and validated ledger postings to commit together. */
+    /** A ledger-owned SQLite transaction for related application rows and validated ledger postings. */
     public final class SqlTransaction {
         private SqlTransaction() {
         }

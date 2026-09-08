@@ -9,12 +9,12 @@ class TaxPolicyTest {
 
     @Test
     void administratorsCanChangeOnlyWholePercentagesWithinBounds() {
-        TaxPolicy policy = new TaxPolicy(5, 1, 5, 3);
+        TaxPolicy policy = new TaxPolicy(1, 5);
 
         policy.setRate(TaxType.TRANSFER_INCOME, 12);
 
         assertEquals(12, policy.rate(TaxType.TRANSFER_INCOME));
-        assertThrows(IllegalArgumentException.class, () -> policy.setRate(TaxType.MARKET_CONSUMPTION, 101));
-        assertEquals(3, policy.rate(TaxType.MARKET_CONSUMPTION));
+        assertThrows(IllegalArgumentException.class, () -> policy.setRate(TaxType.TRANSFER_FEE, 101));
+        assertEquals(1, policy.rate(TaxType.TRANSFER_FEE));
     }
 }

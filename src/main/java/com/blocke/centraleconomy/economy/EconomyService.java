@@ -10,22 +10,20 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Domain use cases for issuing, burning, and treasury procurement. */
+/** Domain use cases for controlled money supply, Treasury and player transfers. */
 public final class EconomyService {
     private final LedgerRepository ledger;
     private final TaxPolicy taxPolicy;
 
-    public EconomyService(LedgerRepository ledger, int procurementIncomeTaxRatePercent) {
-        this(ledger, procurementIncomeTaxRatePercent, 1, 5);
+    public EconomyService(LedgerRepository ledger) {
+        this(ledger, new TaxPolicy(1, 5));
     }
 
     public EconomyService(
             LedgerRepository ledger,
-            int procurementIncomeTaxRatePercent,
             int transferFeeRatePercent,
             int transferIncomeTaxRatePercent) {
-        this(ledger, new TaxPolicy(procurementIncomeTaxRatePercent, transferFeeRatePercent,
-                transferIncomeTaxRatePercent, 3));
+        this(ledger, new TaxPolicy(transferFeeRatePercent, transferIncomeTaxRatePercent));
     }
 
     public EconomyService(LedgerRepository ledger, TaxPolicy taxPolicy) {
@@ -94,75 +92,12 @@ public final class EconomyService {
         return new PlayerTransferResult(amount, fee, incomeTax, Money.ofCents(recipientNet), Money.ofCents(senderDebit));
     }
 
-    public synchronized ProcurementQuote quoteProcurement(UUID playerId, ProcurementItem item, int quantity) {
-        Objects.requireNonNull(playerId, "playerId");
-        validateItemAndQuantity(item, quantity);
-        Money gross = grossFor(item, quantity);
-        return new ProcurementQuote(playerId, item, quantity, gross, taxFor(gross));
-    }
-
-    public synchronized ProcurementResult settleProcurement(UUID playerId, ProcurementQuote quote) {
-        Objects.requireNonNull(playerId, "playerId");
-        Objects.requireNonNull(quote, "quote");
-        if (!playerId.equals(quote.playerId())) {
-            throw new IllegalArgumentException("procurement quote belongs to a different player");
-        }
-
-        validateItemAndQuantity(quote.item(), quote.quantity());
-        Money expectedGross = grossFor(quote.item(), quote.quantity());
-        Money expectedTax = taxFor(expectedGross);
-        if (!expectedGross.equals(quote.gross()) || !expectedTax.equals(quote.tax())) {
-            throw new IllegalArgumentException("procurement quote does not match current terms");
-        }
-        if (ledger.balance(AccountId.treasury()).cents() < expectedGross.cents()) {
-            throw new IllegalStateException("treasury has insufficient funds for procurement");
-        }
-
-        List<LedgerRepository.Posting> postings = new ArrayList<>();
-        postings.add(new LedgerRepository.Posting(
-                AccountId.treasury(), AccountId.player(playerId), expectedGross,
-                TransactionType.PROCUREMENT_GROSS, quote.item().materialKey() + " gross"));
-        if (expectedTax.cents() > 0) {
-            postings.add(new LedgerRepository.Posting(
-                    AccountId.player(playerId), AccountId.treasury(), expectedTax,
-                    TransactionType.PROCUREMENT_TAX, quote.item().materialKey() + " tax"));
-        }
-        ledger.transferBatch(postings);
-
-        return new ProcurementResult(
-                expectedGross,
-                expectedTax,
-                Money.ofCents(expectedGross.cents() - expectedTax.cents()));
-    }
-
     public synchronized Money treasuryBalance() {
         return ledger.balance(AccountId.treasury());
     }
 
     public synchronized Money playerBalance(UUID playerId) {
         return ledger.balance(AccountId.player(Objects.requireNonNull(playerId, "playerId")));
-    }
-
-    private void validateItemAndQuantity(ProcurementItem item, int quantity) {
-        Objects.requireNonNull(item, "item");
-        if (!item.enabled()) {
-            throw new IllegalArgumentException("procurement item is disabled");
-        }
-        if (quantity < 1 || quantity > item.maxPerSale()) {
-            throw new IllegalArgumentException("quantity must be between 1 and the item's maximum sale quantity");
-        }
-    }
-
-    private static Money grossFor(ProcurementItem item, int quantity) {
-        try {
-            return Money.ofCents(Math.multiplyExact(item.unitPrice().cents(), (long) quantity));
-        } catch (ArithmeticException exception) {
-            throw new IllegalArgumentException("procurement gross exceeds supported range", exception);
-        }
-    }
-
-    private Money taxFor(Money gross) {
-        return percentageOf(gross, taxPolicy.rate(TaxType.PROCUREMENT_INCOME), "procurement tax");
     }
 
     private static Money percentageOf(Money amount, int ratePercent, String label) {

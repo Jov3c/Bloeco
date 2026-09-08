@@ -35,7 +35,7 @@ class SqliteLedgerRepositoryTest {
     @Test
     void transferPersistsBalancesAndOneLedgerEntry() {
         repository.credit(AccountId.treasury(), Money.ofCents(10_000), TransactionType.ISSUE, "seed");
-        repository.transfer(AccountId.treasury(), AccountId.player(player), Money.ofCents(2_500), TransactionType.PROCUREMENT_GROSS, "wheat");
+        repository.transfer(AccountId.treasury(), AccountId.player(player), Money.ofCents(2_500), TransactionType.TREASURY_ALLOCATION, "approved allocation");
 
         assertEquals(7_500, repository.balance(AccountId.treasury()).cents());
         assertEquals(2_500, repository.balance(AccountId.player(player)).cents());
@@ -50,10 +50,10 @@ class SqliteLedgerRepositoryTest {
         repository.transferBatch(List.of(
                 new LedgerRepository.Posting(
                         AccountId.treasury(), AccountId.player(seller), Money.ofCents(2_500),
-                        TransactionType.PROCUREMENT_GROSS, "wheat gross"),
+                        TransactionType.TREASURY_ALLOCATION, "approved allocation"),
                 new LedgerRepository.Posting(
                         AccountId.player(seller), AccountId.treasury(), Money.ofCents(125),
-                        TransactionType.PROCUREMENT_TAX, "wheat tax")));
+                        TransactionType.PERSONAL_INCOME_TAX, "income tax")));
 
         assertEquals(7_625, repository.balance(AccountId.treasury()).cents());
         assertEquals(2_375, repository.balance(AccountId.player(seller)).cents());
@@ -69,10 +69,10 @@ class SqliteLedgerRepositoryTest {
         assertThrows(IllegalStateException.class, () -> repository.transferBatch(List.of(
                 new LedgerRepository.Posting(
                         AccountId.treasury(), AccountId.player(firstPlayer), Money.ofCents(800),
-                        TransactionType.PROCUREMENT_GROSS, "first payment"),
+                        TransactionType.TREASURY_ALLOCATION, "first allocation"),
                 new LedgerRepository.Posting(
                         AccountId.treasury(), AccountId.player(secondPlayer), Money.ofCents(300),
-                        TransactionType.PROCUREMENT_GROSS, "second payment"))));
+                        TransactionType.TREASURY_ALLOCATION, "second allocation"))));
 
         assertEquals(1_000, repository.balance(AccountId.treasury()).cents());
         assertEquals(0, repository.balance(AccountId.player(firstPlayer)).cents());
@@ -86,7 +86,7 @@ class SqliteLedgerRepositoryTest {
                 AccountId.issuance(),
                 AccountId.player(UUID.randomUUID()),
                 Money.ofCents(100),
-                TransactionType.PROCUREMENT_GROSS,
+                TransactionType.TREASURY_ALLOCATION,
                 "invalid issuance"));
 
         assertEquals(0, repository.entryCount());

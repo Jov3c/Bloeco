@@ -1,25 +1,25 @@
 # Bloeco
 
-Bloeco 是 Paper `1.21.11` 的中央经济核心：一个 SQLite 总账本、一个 Vault 货币提供者，以及不依赖第三方商店插件的 GUI 交易系统。金额以分为单位保存，避免浮点误差。
+Bloeco 是 Paper `1.21.11` 的反通胀经济内核。它提供唯一的货币账本、Vault 余额服务、玩家转账、税收、国库和货币供给控制；它**不提供商店、收购、商品价格、库存或物品交付功能**。
 
-## 玩家使用
+货币以整数分保存在 SQLite 中，所有 Bloeco 自身资金操作均通过原子账本结算。
 
-输入 `/bloeco`（`/economy` 仍作为兼容别名）即可打开经济中心：
+## 功能
 
-- **国库收购**：按收购表出售背包中的普通物资，收购所得税自动回流国库。
-- **玩家市场**：浏览、购买、上架和撤销物资都在 GUI 中完成；买方消费税与市场手续费自动进入国库。
-- **转账**：从在线玩家列表选择收款人，再点选金额；付款方承担手续费，收款方的所得税自动结算并显示明细。
+- **余额管理**：玩家余额与国库余额由同一 SQLite 账本维护。
+- **Vault 服务**：对 QuickShop、商店、任务和证券等独立插件提供标准 `Economy` 接口。
+- **GUI 转账**：`/bloeco` 选择在线收款人和金额；付款方手续费、收款方个人所得税自动计入国库。
+- **税务管理**：税务管理员在 GUI 内调整转账手续费和个人所得税，调整立即生效并写入配置。
+- **货币供给**：税务管理员在有确认页的 GUI 内发行、回收货币；每笔操作均记录到不可变账本。
+- **证券准备金**：仅从已经发行的国库余额划拨给 Bloeco-Stock，绝不以准备金名义增发。
 
-`/pay` 与 `/market` 保留为旧服兼容入口，但日常操作应使用 Bloeco GUI。
+## 使用
 
-## 税务与国库管理
+`/bloeco` 打开经济中心。普通玩家可以查看余额和转账；税务管理员会额外看到税务与国库面板。
 
-税务管理员在 `/bloeco` 中会看到 **税务与国库管理** 面板，无须常规管理指令：
+兼容命令 `/pay <在线玩家> <金额>` 仍可使用，但日常操作建议使用 GUI。
 
-- 左键、右键、Shift 点击分别使用面板显示的金额档位发行、回收或划拨 Bloeco-Stock 准备金；每笔账自动写入操作者和操作类型。
-- 税率面板可直接调整收购所得税、转账手续费、转账个人所得税和市场消费税；改动立即生效并保存到 `plugins/Bloeco/config.yml`。
-
-管理员由配置决定，支持权限节点和 UUID 白名单的并集：
+管理员由权限节点与 UUID 白名单的并集决定：
 
 ```yml
 tax-administrators:
@@ -28,16 +28,21 @@ tax-administrators:
     - "玩家 UUID"
 ```
 
-默认 `bloeco.tax-admin` 仅赋予 OP。将 `permission` 改成任意权限插件中的节点，或填入 UUID，即可自定义税务管理员。
+## 反通胀原则
 
-## Vault 与 Bloeco-Stock
+1. 玩家转账不会产生新货币，手续费与所得税回流国库。
+2. 只有税务管理员能通过国库 GUI 发行货币；发行与回收均有对应账本记录。
+3. 不允许其他插件直接访问 `plugins/Bloeco/economy.db`。
+4. 服务器只能启用一个 Vault `Economy` 提供者；部署 Bloeco 时禁用 EssentialsX Economy 等竞争提供者。
 
-Vault 是可选依赖。检测到 Vault 后，Bloeco 会以最高优先级注册唯一的 `Economy` 提供者；不要同时启用 EssentialsX Economy 等竞争提供者。Bloeco-Stock 仅通过 Vault 调用玩家钱包，绝不读取 Bloeco 的 SQLite 文件。
+## 给商店、任务和其他插件开发者
 
-安装顺序为：`Vault` → `Bloeco` → `Bloeco-Stock`。首次蓝筹开市前，在 Bloeco 的税务与国库面板中从**已经发行的国库余额**划拨足额证券准备金（默认总额 `1,150,000.00`）。这只是资金位置变更，不会增发。详见 [Bloeco-Stock 集成契约](docs/bloeco-stock-integration.md)。
+Bloeco 是经济底座，不是商店框架。请阅读 [第三方经济接入规范](docs/third-party-economy-integration.md)。核心要求是：只使用 Vault，使用两位小数金额，外部扣款结果不确定时失败关闭，绝不直接写 Bloeco SQLite。
 
-旧版 `plugins/CentralEconomy` 数据目录会在目标 `plugins/Bloeco` 不存在时自动迁移，绝不会覆盖已有新目录。
+Bloeco-Stock 集成规则见 [证券集成说明](docs/bloeco-stock-integration.md)。
 
-## 构建
+## 迁移与构建
 
-使用 Java 21 执行 `./gradlew shadowJar`。成品为 `build/libs/Bloeco-<version>.jar`；SQLite 驱动已内置，Paper 与 Vault 由服务器提供。
+旧 `plugins/CentralEconomy` 数据目录会在 `plugins/Bloeco` 不存在时自动迁移，绝不会覆盖新目录。
+
+使用 Java 21 执行 `./gradlew shadowJar`；成品为 `build/libs/Bloeco-<version>.jar`。SQLite 驱动已内置，Paper 与 Vault 由服务器提供。
