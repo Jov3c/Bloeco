@@ -13,8 +13,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Monetary authority and Treasury use cases; no ordinary operation may mint money. */
@@ -22,6 +24,12 @@ public final class CentralBankService {
     public static final String PER_OPERATION_ISSUANCE_LIMIT = "issuance.per-operation-minor";
     public static final String DAILY_ISSUANCE_LIMIT = "issuance.daily-minor";
     public static final String ROLLING_GROWTH_LIMIT_BPS = "issuance.rolling-30-day-growth-bps";
+    private static final String BOOTSTRAP_REQUESTER = "system:bootstrap-requester";
+    private static final String BOOTSTRAP_APPROVER = "system:bootstrap-approver";
+    private static final String BOOTSTRAP_REASON = "Configured initial Treasury supply";
+    private static final String BOOTSTRAP_KEY = "bootstrap:treasury:v1";
+    private static final UUID BOOTSTRAP_REQUEST_ID = UUID.nameUUIDFromBytes(
+            "bloeco:bootstrap:treasury:v1".getBytes(StandardCharsets.UTF_8));
 
     private final LedgerStore store;
     private final Clock clock;
@@ -41,6 +49,41 @@ public final class CentralBankService {
         store.createAccount(Account.treasury());
         store.createAccount(Account.taxRevenue());
         store.createAccount(Account.feeRevenue());
+    }
+
+    /** Creates the configured genesis supply only while the journal is still empty. */
+    public Optional<JournalReceipt> bootstrapTreasury(Money amount) {
+        requirePositive(amount);
+        Optional<IssuanceRecord> existing = store.findIssuanceRequest(BOOTSTRAP_REQUEST_ID);
+        if (existing.isEmpty()) {
+            if (store.entryCount() != 0) return Optional.empty();
+            store.createIssuanceRequest(new IssuanceRecord(BOOTSTRAP_REQUEST_ID, amount,
+                    IssuanceRecord.Status.REQUESTED, BOOTSTRAP_REASON, BOOTSTRAP_REQUESTER,
+                    null, clock.instant(), null, null));
+        } else if (!existing.get().requesterId().equals(BOOTSTRAP_REQUESTER)
+                || !existing.get().reason().equals(BOOTSTRAP_REASON)) {
+            throw new LedgerException(LedgerException.Code.IDEMPOTENCY_CONFLICT,
+                    "Treasury bootstrap configuration conflicts with the existing genesis request");
+        }
+
+        IssuanceRecord request = store.issuanceRequest(BOOTSTRAP_REQUEST_ID);
+        if (request.status() == IssuanceRecord.Status.REQUESTED) {
+            request = approveIssuance(BOOTSTRAP_REQUEST_ID, BOOTSTRAP_APPROVER);
+        }
+        if (request.status() != IssuanceRecord.Status.APPROVED
+                && request.status() != IssuanceRecord.Status.EXECUTED) {
+            throw policyRejected("Treasury bootstrap request is not executable");
+        }
+        return Optional.of(executeIssuance(BOOTSTRAP_REQUEST_ID, BOOTSTRAP_REQUESTER, BOOTSTRAP_KEY));
+    }
+
+    /** Allocates starter money from Treasury exactly once for each player. */
+    public JournalReceipt grantStarterFunds(UUID playerId, Money amount) {
+        Objects.requireNonNull(playerId, "playerId");
+        requirePositive(amount);
+        store.createAccount(Account.player(playerId));
+        return allocateFromTreasury(AccountId.player(playerId), amount, "system:starter-funds",
+                "Configured starter funds", "starter:" + playerId + ":v1");
     }
 
     public UUID requestIssuance(Money amount, String requesterId, String reason) {

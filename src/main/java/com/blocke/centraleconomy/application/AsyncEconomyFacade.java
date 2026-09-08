@@ -17,6 +17,7 @@ import com.blocke.centraleconomy.storage.sqlite.SqliteLedgerStore;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -39,6 +40,15 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     private volatile boolean readOnly;
 
     public AsyncEconomyFacade(Supplier<? extends LedgerStore> storeFactory, Clock clock) {
+        this(storeFactory, clock, Optional.empty());
+    }
+
+    public AsyncEconomyFacade(Supplier<? extends LedgerStore> storeFactory, Clock clock, Money initialTreasury) {
+        this(storeFactory, clock, Optional.of(Objects.requireNonNull(initialTreasury, "initialTreasury")));
+    }
+
+    private AsyncEconomyFacade(
+            Supplier<? extends LedgerStore> storeFactory, Clock clock, Optional<Money> initialTreasury) {
         Objects.requireNonNull(storeFactory, "storeFactory");
         Objects.requireNonNull(clock, "clock");
         executor = Executors.newSingleThreadExecutor(task -> {
@@ -47,7 +57,7 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             worker.set(thread);
             return thread;
         });
-        executor.execute(() -> initialize(storeFactory, clock));
+        executor.execute(() -> initialize(storeFactory, clock, initialTreasury));
     }
 
     public static AsyncEconomyFacade sqlite(Path databasePath, Clock clock) {
@@ -56,6 +66,14 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             new LegacySqliteMigrator().migrateIfRequired(path);
             return new SqliteLedgerStore(path);
         }, clock);
+    }
+
+    public static AsyncEconomyFacade sqlite(Path databasePath, Clock clock, Money initialTreasury) {
+        Path path = Objects.requireNonNull(databasePath, "databasePath");
+        return new AsyncEconomyFacade(() -> {
+            new LegacySqliteMigrator().migrateIfRequired(path);
+            return new SqliteLedgerStore(path);
+        }, clock, initialTreasury);
     }
 
     public CompletionStage<Result<Void>> readyStage() {
@@ -108,6 +126,10 @@ public final class AsyncEconomyFacade implements AutoCloseable {
         return submitWrite(context -> context.bank.adjustPlayerBalance(playerId, target, actorId, memo, idempotencyKey));
     }
 
+    public CompletionStage<Result<JournalReceipt>> grantStarterFunds(UUID playerId, Money amount) {
+        return submitWrite(context -> context.bank.grantStarterFunds(playerId, amount));
+    }
+
     public CompletionStage<Result<TaxRule>> changeTaxRule(
             TaxCategory category, int basisPoints, long fixedMinor, String actorId, String memo) {
         return submitWrite(context -> context.taxes.change(category, basisPoints, fixedMinor, actorId, memo));
@@ -142,7 +164,8 @@ public final class AsyncEconomyFacade implements AutoCloseable {
         return readOnly;
     }
 
-    private void initialize(Supplier<? extends LedgerStore> storeFactory, Clock clock) {
+    private void initialize(
+            Supplier<? extends LedgerStore> storeFactory, Clock clock, Optional<Money> initialTreasury) {
         try {
             LedgerStore store = storeFactory.get();
             IntegrityReport integrity = store.verifyIntegrity();
@@ -152,6 +175,7 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             if (integrity.valid()) {
                 bank.initializeCentralAccounts();
                 taxes.initializeDefaults();
+                initialTreasury.ifPresent(bank::bootstrapTreasury);
                 integrity = queries.verifyIntegrity();
             }
             services = new Services(store, bank, taxes, new PlayerPaymentService(store, taxes, clock), queries);

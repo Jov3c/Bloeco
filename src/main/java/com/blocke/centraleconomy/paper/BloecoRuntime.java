@@ -3,6 +3,7 @@ package com.blocke.centraleconomy.paper;
 import com.blocke.centraleconomy.application.AsyncEconomyFacade;
 import com.blocke.centraleconomy.application.result.Result;
 import com.blocke.centraleconomy.application.IntegrityReport;
+import com.blocke.centraleconomy.domain.money.Money;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -19,6 +20,10 @@ public final class BloecoRuntime implements AutoCloseable {
 
     public static BloecoRuntime sqlite(Path databasePath) {
         return new BloecoRuntime(AsyncEconomyFacade.sqlite(databasePath, Clock.systemUTC()));
+    }
+
+    public static BloecoRuntime sqlite(Path databasePath, Money initialTreasury) {
+        return new BloecoRuntime(AsyncEconomyFacade.sqlite(databasePath, Clock.systemUTC(), initialTreasury));
     }
 
     public AsyncEconomyFacade facade() { return facade; }

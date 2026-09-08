@@ -19,6 +19,7 @@ public interface LedgerStore extends AutoCloseable {
     void createAccount(Account account);
     JournalEntry commit(JournalEntry entry);
     void createIssuanceRequest(IssuanceRecord request);
+    Optional<IssuanceRecord> findIssuanceRequest(UUID requestId);
     IssuanceRecord issuanceRequest(UUID requestId);
     IssuanceRecord approveIssuance(UUID requestId, String approverId, Instant approvedAt);
     JournalEntry commitApprovedIssuance(UUID requestId, JournalEntry entry);

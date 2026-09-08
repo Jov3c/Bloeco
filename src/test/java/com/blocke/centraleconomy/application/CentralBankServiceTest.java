@@ -15,10 +15,12 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CentralBankServiceTest {
     private static final UUID PLAYER = UUID.fromString("00000000-0000-0000-0000-00000000000a");
@@ -129,6 +131,41 @@ class CentralBankServiceTest {
         LedgerException repeated = assertThrows(LedgerException.class,
                 () -> bank.reverse(allocation.entryId(), APPROVER, "repeat", "reverse-2"));
         assertEquals(LedgerException.Code.INVALID_JOURNAL, repeated.code());
+    }
+
+    @Test
+    void bootstrapCreatesExactlyOneMillionInTreasuryAndCannotReplay() {
+        Optional<JournalReceipt> first = bank.bootstrapTreasury(Money.parse("1000000.00"));
+        Optional<JournalReceipt> replay = bank.bootstrapTreasury(Money.parse("2000000.00"));
+
+        assertEquals(first, replay);
+        assertEquals(100_000_000L, store.balance(AccountId.treasury()));
+        assertEquals(100_000_000L, store.monetaryTotals().netSupplyMinor());
+        assertEquals(1, store.entryCount());
+    }
+
+    @Test
+    void bootstrapNeverAddsGenesisMoneyToAnExistingLedger() {
+        issue(25_000);
+
+        Optional<JournalReceipt> result = bank.bootstrapTreasury(Money.parse("1000000.00"));
+
+        assertTrue(result.isEmpty());
+        assertEquals(25_000L, store.monetaryTotals().netSupplyMinor());
+    }
+
+    @Test
+    void starterFundsAreAllocatedOnceEvenIfPlayerLaterReturnsToZero() {
+        bank.bootstrapTreasury(Money.parse("1000000.00"));
+        JournalReceipt first = bank.grantStarterFunds(PLAYER, Money.parse("100.00"));
+        bank.adjustPlayerBalance(PLAYER, Money.ofMinor(0), REQUESTER, "spent starter funds", "starter-spent");
+        int entriesBeforeReplay = store.entryCount();
+        JournalReceipt replay = bank.grantStarterFunds(PLAYER, Money.parse("100.00"));
+
+        assertEquals(first, replay);
+        assertEquals(0L, store.balance(AccountId.player(PLAYER)));
+        assertEquals(entriesBeforeReplay, store.entryCount());
+        assertEquals(100_000_000L, store.monetaryTotals().netSupplyMinor());
     }
 
     private void issue(long amount) {

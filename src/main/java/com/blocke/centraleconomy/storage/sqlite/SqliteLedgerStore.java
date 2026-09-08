@@ -141,19 +141,24 @@ public final class SqliteLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized IssuanceRecord issuanceRequest(UUID requestId) {
+    public synchronized Optional<IssuanceRecord> findIssuanceRequest(UUID requestId) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT * FROM issuance_requests WHERE request_id = ?")) {
             statement.setString(1, requestId.toString());
             try (ResultSet result = statement.executeQuery()) {
-                if (!result.next()) throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
-                        "issuance request does not exist");
-                return readIssuance(result);
+                return result.next() ? Optional.of(readIssuance(result)) : Optional.empty();
             }
         } catch (SQLException exception) {
             throw storageFailure("unable to read issuance request", exception);
         }
+    }
+
+    @Override
+    public synchronized IssuanceRecord issuanceRequest(UUID requestId) {
+        return findIssuanceRequest(requestId)
+                .orElseThrow(() -> new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance request does not exist"));
     }
 
     @Override

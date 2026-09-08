@@ -3,6 +3,13 @@ currency:
   singular: "金币"
   plural: "金币"
   symbol: "⛃"
+
+# Used only for a new economy ledger. Changing this later never creates more money.
+bootstrap:
+  treasury-initial-balance: "1000000.00"
+  # Paid once per player from Treasury; it is not newly issued currency.
+  player-initial-balance: "100.00"
+
 storage:
   type: sqlite
   sqlite:
