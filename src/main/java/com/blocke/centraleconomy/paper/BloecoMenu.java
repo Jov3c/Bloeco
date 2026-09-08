@@ -1,6 +1,7 @@
 package com.blocke.centraleconomy.paper;
 
 import com.blocke.centraleconomy.application.AsyncEconomyFacade;
+import com.blocke.centraleconomy.application.JournalMemos;
 import com.blocke.centraleconomy.application.command.PlayerPayment;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
@@ -246,7 +247,7 @@ public final class BloecoMenu implements Listener {
         if (amount == null || recipient == null) return;
         String key = "gui:" + UUID.randomUUID();
         economy.pay(new PlayerPayment(sender.getUniqueId(), recipient.getUniqueId(), amount,
-                "GUI payment " + sender.getName() + " -> " + recipient.getName(), key))
+                JournalMemos.playerPayment(sender.getName(), recipient.getName()), key))
                 .thenAccept(result -> runMain(() -> {
                     if (!result.isSuccess()) sender.sendMessage(MessageFormatter.error(result));
                     else {
@@ -286,7 +287,7 @@ public final class BloecoMenu implements Listener {
     private void performAdmin(Player player, ConfirmHolder holder) {
         String actor = "player:" + player.getUniqueId();
         if (holder.action == AdminAction.REQUEST_ISSUE) {
-            economy.requestIssuance(holder.amount, actor, "GUI issuance request by " + player.getName())
+            economy.requestIssuance(holder.amount, actor, JournalMemos.issuanceRequest(player.getName()))
                     .thenAccept(result -> runMain(() -> {
                         player.sendMessage(result.isSuccess()
                                 ? "发行申请已创建：" + result.value() + "，需由另一名货币管理员审批。"
@@ -294,7 +295,7 @@ public final class BloecoMenu implements Listener {
                         openAdministration(player);
                     }));
         } else {
-            economy.retire(holder.amount, actor, "GUI retirement by " + player.getName(),
+            economy.retire(holder.amount, actor, JournalMemos.retirement(player.getName()),
                             "gui-retire:" + UUID.randomUUID())
                     .thenAccept(result -> runMain(() -> {
                         player.sendMessage(result.isSuccess() ? "货币回收已入账。" : MessageFormatter.error(result));
@@ -309,7 +310,7 @@ public final class BloecoMenu implements Listener {
         if (click.isRightClick()) delta = -delta;
         int next = Math.max(0, Math.min(10_000, current + delta));
         economy.changeTaxRule(category, next, 0, "player:" + player.getUniqueId(),
-                        "GUI fiscal rule change by " + player.getName())
+                        JournalMemos.fiscalRuleChange(player.getName()))
                 .thenAccept(result -> runMain(() -> {
                     player.sendMessage(result.isSuccess()
                             ? "财政规则已更新为 " + basisPoints(next) + "。" : MessageFormatter.error(result));

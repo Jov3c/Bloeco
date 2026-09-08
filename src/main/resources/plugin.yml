@@ -1,5 +1,5 @@
 name: Bloeco
-version: 1.1.1
+version: 1.1.2
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 commands:

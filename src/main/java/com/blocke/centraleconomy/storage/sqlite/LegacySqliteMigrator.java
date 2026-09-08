@@ -1,5 +1,6 @@
 package com.blocke.centraleconomy.storage.sqlite;
 
+import com.blocke.centraleconomy.application.JournalMemos;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalType;
@@ -199,7 +200,7 @@ public final class LegacySqliteMigrator {
                 String memo = legacy.getString("memo");
                 journal.setString(1, entryId);
                 journal.setString(2, mapJournalType(legacy.getString("transaction_type"), debit, credit).name());
-                journal.setString(3, memo == null || memo.isBlank() ? "Legacy entry " + legacyId : memo);
+                journal.setString(3, memo == null || memo.isBlank() ? JournalMemos.legacyEntry(legacyId) : memo);
                 journal.setLong(4, legacy.getLong("created_at_epoch_ms"));
                 journal.executeUpdate();
 

@@ -44,4 +44,15 @@ class JournalDisplayTest {
         assertEquals("国库拨款", view.title());
         assertEquals("收入：100.00 金币", view.lore().get(0));
     }
+
+    @Test
+    void knownLegacyEnglishMemoIsTranslatedForExistingJournal() {
+        JournalEntry entry = JournalEntry.create(UUID.randomUUID(), JournalType.PLAYER_TRANSFER,
+                "Player payment Alice -> Bob", "bloeco.player", "old-payment", TIME,
+                List.of(new Posting(PLAYER, -10_000), new Posting(AccountId.treasury(), 10_000)));
+
+        JournalDisplay.View view = JournalDisplay.forAccount(entry, PLAYER, ZoneId.of("Asia/Shanghai"));
+
+        assertEquals("说明：Alice 向 Bob 转账", view.lore().get(2));
+    }
 }

@@ -42,6 +42,43 @@ CompletionStage<EconomyResult<List<JournalView>>> recentJournal(AccountRef accou
 
 `SettlementRequest` 至少应包含付款账户、收款机构、税务类别、本金、业务摘要、订单引用、幂等键。Bloeco 会在一个数据库事务中计算并记入本金、消费税、平台费或其他中央规则；插件不能自行伪造税收分录。
 
+### 3.1 账单类型与中文说明
+
+接入请求必须把机器字段和玩家展示文本分开：
+
+- `businessType`：稳定的 ASCII 业务类型，例如 `shop.purchase`、`shop.sale`、`stock.buy`、`quest.reward`。它用于程序判断，发布后不得随显示文案改变。
+- `businessReference`：插件内部订单号、成交号或任务发放号。它用于审计和退款关联，不直接显示给普通玩家。
+- `displayMemo`：写入 Bloeco 永久账单的中文说明，UTF-8 纯文本，必填，建议 1 至 80 个字符，硬上限 256 个字符。不能包含 MiniMessage/颜色控制符、密钥、完整堆栈、幂等键或敏感数据。
+- `idempotencyKey`：稳定的重试身份，只用于防止重复扣款，不能当作账单说明。
+
+Bloeco 按提交时的 `displayMemo` 保存快照，不会猜测翻译第三方插件的任意说明。玩家名、商品名、证券名等专有名称可以保留原文，但动作与业务含义应使用中文完整表达。
+
+推荐示例：
+
+| 业务类型 | `displayMemo` |
+| --- | --- |
+| `shop.purchase` | `在 Bloeco 商店购买 16 个钻石` |
+| `shop.sale` | `向 Bloeco 商店出售 64 个小麦` |
+| `shop.refund` | `Bloeco 商店订单退款` |
+| `stock.buy` | `买入 10 股矿业指数` |
+| `stock.sell` | `卖出 10 股矿业指数` |
+| `quest.reward` | `完成“初来乍到”任务奖励` |
+
+计划中的请求形态：
+
+```java
+new SettlementRequest(
+        payerAccount,
+        institutionAccount,
+        TaxCategory.CONSUMPTION,
+        amountMinor,
+        "shop.purchase",
+        "在 Bloeco 商店购买 16 个钻石",
+        "order-20260908-0001",
+        "shop:order:20260908-0001:payment"
+);
+```
+
 ## 4. 商店推荐状态机
 
 ```text

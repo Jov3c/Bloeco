@@ -86,7 +86,7 @@ public final class CentralBankService {
         if (existing.isPresent()) return new JournalReceipt(existing.get().id());
         store.createAccount(Account.player(playerId));
         return allocateFromTreasury(AccountId.player(playerId), amount, "system:starter-funds",
-                "Configured starter funds", key);
+                JournalMemos.STARTER_FUNDS, key);
     }
 
     public UUID requestIssuance(Money amount, String requesterId, String reason) {
@@ -118,7 +118,7 @@ public final class CentralBankService {
         }
         validateIssuancePolicy(request.amount());
         JournalEntry entry = JournalEntry.create(UUID.randomUUID(), JournalType.ISSUE,
-                "Approved issuance: " + request.reason(), "bloeco.monetary", key,
+                JournalMemos.approvedIssuance(request.reason()), "bloeco.monetary", key,
                 clock.instant(), List.of(
                         new Posting(AccountId.issuanceControl(), -request.amount().minor()),
                         new Posting(AccountId.treasury(), request.amount().minor())));

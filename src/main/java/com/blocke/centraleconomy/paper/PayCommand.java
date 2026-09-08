@@ -1,6 +1,7 @@
 package com.blocke.centraleconomy.paper;
 
 import com.blocke.centraleconomy.application.AsyncEconomyFacade;
+import com.blocke.centraleconomy.application.JournalMemos;
 import com.blocke.centraleconomy.application.command.PlayerPayment;
 import com.blocke.centraleconomy.domain.money.Money;
 import org.bukkit.Bukkit;
@@ -56,7 +57,7 @@ public final class PayCommand implements CommandExecutor, TabCompleter {
         }
         String key = "command:" + UUID.randomUUID();
         PlayerPayment payment = new PlayerPayment(payer.getUniqueId(), recipient.getUniqueId(), amount,
-                "Player payment " + payer.getName() + " -> " + recipient.getName(), key);
+                JournalMemos.playerPayment(payer.getName(), recipient.getName()), key);
         economy.pay(payment).thenAccept(result -> runMain(() -> {
             if (!result.isSuccess()) {
                 payer.sendMessage(MessageFormatter.error(result));

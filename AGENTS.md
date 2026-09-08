@@ -63,6 +63,15 @@ The public native API is not released in Phase 1. Until it exists, another plugi
 
 When implementing the native API, keep it asynchronous and versioned. A plugin registers a stable institution `clientId`; Bloeco creates and owns its institution accounts. Settlement requests carry a stable idempotency key and return a permanent journal ID. A shop marks an order paid and delivers items only after Bloeco returns a committed receipt. Timeouts remain result-unknown and must be queried or retried with the same key. See `docs/third-party-economy-integration.md` for the planned request lifecycle, refund rules, and error contract.
 
+Every external settlement must separate these values:
+
+- `businessType`: stable ASCII machine identifier such as `shop.purchase`, `stock.buy`, or `quest.reward`.
+- `businessReference`: private order/trade/reward reference used for audit and compensation.
+- `displayMemo`: required UTF-8 plain Chinese player-facing sentence, preferably 1-80 characters and never over the journal limit of 256 characters.
+- `idempotencyKey`: stable retry identity; never show it as the bill explanation.
+
+Bloeco stores `displayMemo` as an immutable snapshot and does not translate arbitrary third-party text. Preserve proper names when needed, but write the action in Chinese: `在 Bloeco 商店购买 16 个钻石`, `卖出 10 股矿业指数`, or `完成“初来乍到”任务奖励`. Never place UUIDs, stack traces, secrets, formatting control codes, or raw JSON in `displayMemo`. Built-in Bloeco journal memos belong in `application/JournalMemos`; add Chinese copy and regression tests there instead of embedding English sentences in command or GUI adapters.
+
 ## Development and release checks
 
 Run:
