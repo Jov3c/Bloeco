@@ -1,5 +1,5 @@
 name: Bloeco
-version: 1.0.0
+version: 1.1.0
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 commands:
@@ -7,7 +7,7 @@ commands:
     description: Opens the Bloeco economy centre.
     usage: /eco
   pay:
-    description: Legacy quick payment command. Bloeco GUI is recommended.
+    description: Pays an online player through Bloeco clearing.
     usage: /pay <online-player> <positive-integer>
 permissions:
   bloeco.role.operator:

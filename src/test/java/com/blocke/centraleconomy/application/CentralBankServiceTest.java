@@ -160,7 +160,7 @@ class CentralBankServiceTest {
         JournalReceipt first = bank.grantStarterFunds(PLAYER, Money.parse("100.00"));
         bank.adjustPlayerBalance(PLAYER, Money.ofMinor(0), REQUESTER, "spent starter funds", "starter-spent");
         int entriesBeforeReplay = store.entryCount();
-        JournalReceipt replay = bank.grantStarterFunds(PLAYER, Money.parse("100.00"));
+        JournalReceipt replay = bank.grantStarterFunds(PLAYER, Money.parse("250.00"));
 
         assertEquals(first, replay);
         assertEquals(0L, store.balance(AccountId.player(PLAYER)));

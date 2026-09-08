@@ -81,9 +81,12 @@ public final class CentralBankService {
     public JournalReceipt grantStarterFunds(UUID playerId, Money amount) {
         Objects.requireNonNull(playerId, "playerId");
         requirePositive(amount);
+        String key = "starter:" + playerId + ":v1";
+        Optional<JournalEntry> existing = store.idempotentResult("bloeco.treasury", key);
+        if (existing.isPresent()) return new JournalReceipt(existing.get().id());
         store.createAccount(Account.player(playerId));
         return allocateFromTreasury(AccountId.player(playerId), amount, "system:starter-funds",
-                "Configured starter funds", "starter:" + playerId + ":v1");
+                "Configured starter funds", key);
     }
 
     public UUID requestIssuance(Money amount, String requesterId, String reason) {
