@@ -59,4 +59,4 @@ Phase 1 仅实现 SQLite。代码通过独立存储边界设计，MySQL 权威�
 ./gradlew clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.0.0-SNAPSHOT.jar`。SQLite 驱动已经打入插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.0.0.jar`。SQLite 驱动已经打入插件包；不需要 Vault 或其他经济前置。
