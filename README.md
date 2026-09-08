@@ -49,7 +49,7 @@ Phase 1 仅实现 SQLite。代码通过独立存储边界设计，MySQL 权威�
 
 请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。当前 Phase 1 尚未发布第三方原生 API；商店等插件可以按规范设计业务层，但在 API 正式提供前不应直连 Bloeco SQLite，也不应通过反射调用内部类。
 
-完整的中央银行设计见 [系统设计](docs/superpowers/specs/2026-09-08-bloeco-central-bank-design.md)。
+完整的中央银行设计见 [系统设计](docs/architecture/central-bank-design.md)。
 
 ## 构建
 
