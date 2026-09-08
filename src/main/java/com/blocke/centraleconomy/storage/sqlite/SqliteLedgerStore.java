@@ -4,6 +4,7 @@ import com.blocke.centraleconomy.application.IntegrityReport;
 import com.blocke.centraleconomy.application.IssuanceRecord;
 import com.blocke.centraleconomy.application.LedgerStore;
 import com.blocke.centraleconomy.application.MonetaryTotals;
+import com.blocke.centraleconomy.application.PlayerSettlement;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
@@ -369,6 +370,55 @@ public final class SqliteLedgerStore implements LedgerStore {
     }
 
     @Override
+    public synchronized PlayerSettlement commitPlayerSettlement(
+            JournalEntry entry, PlayerSettlement settlement) {
+        requireOpen();
+        Objects.requireNonNull(entry, "entry");
+        Objects.requireNonNull(settlement, "settlement");
+        if (!entry.id().equals(settlement.entryId()) || entry.type() != JournalType.PLAYER_TRANSFER) {
+            throw new LedgerException(LedgerException.Code.INVALID_JOURNAL,
+                    "player settlement must match its journal");
+        }
+        Optional<PlayerSettlement> replay = playerSettlement(entry.clientId(), entry.idempotencyKey());
+        if (replay.isPresent()) {
+            if (!sameSettlementRequest(replay.get(), settlement)) {
+                throw new LedgerException(LedgerException.Code.IDEMPOTENCY_CONFLICT,
+                        "idempotency key was already used for a different payment");
+            }
+            return replay.get();
+        }
+        try {
+            beginImmediate();
+            applyEntry(entry);
+            insertPlayerSettlement(settlement);
+            commitTransaction();
+            return settlement;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to commit player settlement", exception);
+        }
+    }
+
+    @Override
+    public synchronized Optional<PlayerSettlement> playerSettlement(String clientId, String idempotencyKey) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT s.* FROM player_settlements s
+                JOIN journal_entries j ON j.entry_id = s.entry_id
+                WHERE j.client_id = ? AND j.idempotency_key = ?
+                """)) {
+            statement.setString(1, clientId);
+            statement.setString(2, idempotencyKey);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(readPlayerSettlement(result)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read player settlement", exception);
+        }
+    }
+
+    @Override
     public synchronized long balance(AccountId accountId) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
@@ -574,6 +624,47 @@ public final class SqliteLedgerStore implements LedgerStore {
                 Instant.ofEpochMilli(result.getLong("effective_from_epoch_ms")),
                 hasUntil ? Instant.ofEpochMilli(until) : null,
                 result.getString("actor_id"), result.getString("memo"));
+    }
+
+    private void insertPlayerSettlement(PlayerSettlement settlement) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO player_settlements(entry_id, sender_id, recipient_id, principal_minor,
+                    sender_debit_minor, recipient_net_minor, fee_minor, income_tax_minor,
+                    fee_rule_version, income_rule_version, memo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """)) {
+            statement.setString(1, settlement.entryId().toString());
+            statement.setString(2, settlement.senderId().toString());
+            statement.setString(3, settlement.recipientId().toString());
+            statement.setLong(4, settlement.principal().minor());
+            statement.setLong(5, settlement.senderDebit().minor());
+            statement.setLong(6, settlement.recipientNet().minor());
+            statement.setLong(7, settlement.fee().minor());
+            statement.setLong(8, settlement.incomeTax().minor());
+            statement.setString(9, settlement.feeRuleVersion().toString());
+            statement.setString(10, settlement.incomeTaxRuleVersion().toString());
+            statement.setString(11, settlement.memo());
+            statement.executeUpdate();
+        }
+    }
+
+    private PlayerSettlement readPlayerSettlement(ResultSet result) throws SQLException {
+        return new PlayerSettlement(UUID.fromString(result.getString("entry_id")),
+                UUID.fromString(result.getString("sender_id")), UUID.fromString(result.getString("recipient_id")),
+                Money.ofMinor(result.getLong("principal_minor")),
+                Money.ofMinor(result.getLong("sender_debit_minor")),
+                Money.ofMinor(result.getLong("recipient_net_minor")),
+                Money.ofMinor(result.getLong("fee_minor")),
+                Money.ofMinor(result.getLong("income_tax_minor")),
+                UUID.fromString(result.getString("fee_rule_version")),
+                UUID.fromString(result.getString("income_rule_version")), result.getString("memo"));
+    }
+
+    private static boolean sameSettlementRequest(PlayerSettlement first, PlayerSettlement second) {
+        return first.senderId().equals(second.senderId())
+                && first.recipientId().equals(second.recipientId())
+                && first.principal().equals(second.principal())
+                && first.memo().equals(second.memo());
     }
 
     private long flowSince(JournalType type, AccountId positiveAccount, Instant since) {

@@ -103,6 +103,21 @@ final class SqliteSchema {
                     )
                     """);
             statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS player_settlements (
+                        entry_id TEXT PRIMARY KEY REFERENCES journal_entries(entry_id),
+                        sender_id TEXT NOT NULL,
+                        recipient_id TEXT NOT NULL,
+                        principal_minor INTEGER NOT NULL CHECK(principal_minor > 0),
+                        sender_debit_minor INTEGER NOT NULL CHECK(sender_debit_minor > 0),
+                        recipient_net_minor INTEGER NOT NULL CHECK(recipient_net_minor >= 0),
+                        fee_minor INTEGER NOT NULL CHECK(fee_minor >= 0),
+                        income_tax_minor INTEGER NOT NULL CHECK(income_tax_minor >= 0),
+                        fee_rule_version TEXT NOT NULL REFERENCES tax_rules(version_id),
+                        income_rule_version TEXT NOT NULL REFERENCES tax_rules(version_id),
+                        memo TEXT NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS policy_limits (
                         policy_key TEXT PRIMARY KEY,
                         value_minor INTEGER NOT NULL,
