@@ -3,14 +3,6 @@ currency:
   singular: "金币"
   plural: "金币"
   symbol: "⛃"
-# /pay: the payer bears this fee; the recipient's gross receipt is subject to income tax.
-transfer-fee-rate: 0.01
-transfer-income-tax-rate: 0.05
-tax-administrators:
-  # A permission node from your permissions plugin. This can be replaced freely.
-  permission: "bloeco.tax-admin"
-  # UUIDs here receive tax administration even without the permission node.
-  player-uuids: []
 storage:
   type: sqlite
   sqlite:

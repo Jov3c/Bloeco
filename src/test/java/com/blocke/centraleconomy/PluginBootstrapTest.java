@@ -24,7 +24,7 @@ class PluginBootstrapTest {
 
     @Test
     void pluginLoadsWithDefaultResources() {
-        var plugin = MockBukkit.load(CentralEconomyPlugin.class);
+        CentralEconomyPlugin plugin = MockBukkit.load(CentralEconomyPlugin.class);
 
         assertNotNull(plugin);
         assertTrue(plugin.getDataFolder().toPath().resolve("config.yml").toFile().isFile());
@@ -32,6 +32,7 @@ class PluginBootstrapTest {
         assertNull(plugin.getCommand("market"));
         assertFalse(plugin.getDataFolder().toPath().resolve("procurement.yml").toFile().exists());
         assertFalse(plugin.getDataFolder().toPath().resolve("market.yml").toFile().exists());
+        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
     }
 
     @Test
@@ -43,5 +44,17 @@ class PluginBootstrapTest {
         assertNull(plugin.getCommand("market"));
         assertFalse(plugin.getDescription().getSoftDepend().contains("Vault"));
         assertFalse(plugin.getDescription().getLoadBefore().contains("Bloeco-Stock"));
+    }
+
+    @Test
+    void payRejectsMoreThanTwoDecimalPlacesBeforeSubmitting() {
+        CentralEconomyPlugin plugin = MockBukkit.load(CentralEconomyPlugin.class);
+        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        var payer = MockBukkit.getMock().addPlayer("Payer");
+        MockBukkit.getMock().addPlayer("Receiver");
+
+        payer.performCommand("pay Receiver 1.001");
+
+        payer.assertSaid("金额必须是大于零且最多两位小数的数字。");
     }
 }

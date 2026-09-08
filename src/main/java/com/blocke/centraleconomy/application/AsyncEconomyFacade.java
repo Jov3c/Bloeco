@@ -4,6 +4,7 @@ import com.blocke.centraleconomy.application.command.PlayerPayment;
 import com.blocke.centraleconomy.application.result.ErrorCode;
 import com.blocke.centraleconomy.application.result.Result;
 import com.blocke.centraleconomy.application.result.TransferReceipt;
+import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.money.Money;
@@ -62,6 +63,14 @@ public final class AsyncEconomyFacade implements AutoCloseable {
         return submit(context -> context.store.balance(accountId));
     }
 
+    public CompletionStage<Result<Long>> playerBalance(UUID playerId) {
+        return submit(context -> {
+            Account account = Account.player(playerId);
+            context.store.createAccount(account);
+            return context.store.balance(account.id());
+        });
+    }
+
     public CompletionStage<Result<TransferReceipt>> pay(PlayerPayment payment) {
         return submit(context -> context.payments.pay(payment));
     }
@@ -92,6 +101,10 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     public CompletionStage<Result<TaxRule>> changeTaxRule(
             TaxCategory category, int basisPoints, long fixedMinor, String actorId, String memo) {
         return submit(context -> context.taxes.change(category, basisPoints, fixedMinor, actorId, memo));
+    }
+
+    public CompletionStage<Result<TaxRule>> currentTaxRule(TaxCategory category) {
+        return submit(context -> context.taxes.current(category));
     }
 
     public CompletionStage<Result<MonetaryTotals>> monetaryTotals() {

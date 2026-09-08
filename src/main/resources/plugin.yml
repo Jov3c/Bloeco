@@ -6,10 +6,23 @@ commands:
   bloeco:
     description: Opens the Bloeco economy centre.
     aliases: [economy]
+    usage: /bloeco [health|verify|balance|issue|retire|player|tax]
   pay:
     description: Legacy quick payment command. Bloeco GUI is recommended.
     usage: /pay <online-player> <amount>
 permissions:
-  bloeco.tax-admin:
-    description: Allows Bloeco tax and treasury administration unless overridden in config.
+  bloeco.role.operator:
+    description: Operates Bloeco health checks and integrity verification.
+    default: op
+  bloeco.role.treasurer:
+    description: Allocates existing Treasury funds and adjusts player balances.
+    default: op
+  bloeco.role.tax:
+    description: Manages versioned tax and fee rules.
+    default: op
+  bloeco.role.monetary:
+    description: Requests, approves, executes, and retires currency.
+    default: op
+  bloeco.role.auditor:
+    description: Reads balances and central-ledger audit information.
     default: op

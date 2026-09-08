@@ -12,6 +12,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -62,6 +63,17 @@ class AsyncEconomyFacadeTest {
         assertTrue(accepted.toCompletableFuture().join().isSuccess());
         Result<Long> rejected = facade.balance(AccountId.treasury()).toCompletableFuture().join();
         assertEquals(ErrorCode.STORAGE_UNAVAILABLE, rejected.errorCode());
+    }
+
+    @Test
+    void readingANewPlayerBalanceCreatesAZeroBalanceWallet() {
+        facade = AsyncEconomyFacade.sqlite(temporaryDirectory.resolve("economy.db"), Clock.systemUTC());
+        assertTrue(facade.readyStage().toCompletableFuture().join().isSuccess());
+
+        Result<Long> result = facade.playerBalance(UUID.randomUUID()).toCompletableFuture().join();
+
+        assertTrue(result.isSuccess());
+        assertEquals(0L, result.value());
     }
 
     @Test
