@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.time.ZoneId;
 
 /** GUI-first access to balances, player clearing, fiscal policy, and monetary controls. */
 public final class BloecoMenu implements Listener {
@@ -152,13 +153,16 @@ public final class BloecoMenu implements Listener {
         } else if (holder instanceof AdminHolder) {
             if (slot == 10 && roles.allows(player, RoleAccess.TAX)) openTaxes(player);
             else if (slot == 12 && roles.allows(player, RoleAccess.MONETARY))
-                openConfirmation(player, AdminAction.REQUEST_ISSUE, amountFor(event.getClick()));
+                openAmountSelection(player, AdminAction.REQUEST_ISSUE);
             else if (slot == 14 && roles.allows(player, RoleAccess.MONETARY))
-                openConfirmation(player, AdminAction.RETIRE, amountFor(event.getClick()));
+                openAmountSelection(player, AdminAction.RETIRE);
             else if (slot == 16 && (roles.allows(player, RoleAccess.AUDITOR)
                     || roles.allows(player, RoleAccess.OPERATOR))) verify(player);
             else if (slot == 18 && (roles.allows(player, RoleAccess.AUDITOR)
                     || roles.allows(player, RoleAccess.OPERATOR))) openOverview(player);
+        } else if (holder instanceof AmountHolder amounts && roles.allows(player, RoleAccess.MONETARY)) {
+            Money amount = amounts.amounts.get(slot);
+            if (amount != null) openConfirmation(player, amounts.action, amount);
         } else if (holder instanceof ConfirmHolder confirmation) {
             if (slot == 11 && roles.allows(player, RoleAccess.MONETARY)) performAdmin(player, confirmation);
             else if (slot == 15) openAdministration(player);
@@ -175,7 +179,8 @@ public final class BloecoMenu implements Listener {
         inventory.setItem(13, item(Material.CLOCK, "正在读取中央账本…", List.of()));
         addNavigation(inventory);
         player.openInventory(inventory);
-        economy.recentJournal(com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId()), 21)
+        var playerAccount = com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId());
+        economy.recentJournal(playerAccount, 21)
                 .thenAccept(result -> runMain(() -> {
                     if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
                     inventory.clear();
@@ -190,9 +195,9 @@ public final class BloecoMenu implements Listener {
                     }
                     int slot = 0;
                     for (var entry : result.value()) {
-                        String memo = entry.memo().length() > 40 ? entry.memo().substring(0, 40) + "…" : entry.memo();
-                        inventory.setItem(slot++, item(Material.PAPER, entry.type().name(),
-                                List.of(entry.createdAt().toString(), memo, "凭证：" + entry.id())));
+                        JournalDisplay.View display = JournalDisplay.forAccount(entry, playerAccount,
+                                ZoneId.systemDefault());
+                        inventory.setItem(slot++, item(Material.PAPER, display.title(), display.lore()));
                     }
                 }));
     }
@@ -264,6 +269,20 @@ public final class BloecoMenu implements Listener {
         player.openInventory(inventory);
     }
 
+    private void openAmountSelection(Player player, AdminAction action) {
+        AmountHolder holder = new AmountHolder(this, action);
+        Inventory inventory = inventory(holder, "Bloeco 选择" + action.amountTitle + "金额");
+        for (int index = 0; index < AMOUNTS.size(); index++) {
+            int slot = 10 + index * 2;
+            Money amount = AMOUNTS.get(index);
+            holder.amounts.put(slot, amount);
+            inventory.setItem(slot, item(action.material, action.title + " "
+                    + MessageFormatter.money(amount) + " 金币", List.of("点击进入确认页面")));
+        }
+        addNavigation(inventory);
+        player.openInventory(inventory);
+    }
+
     private void performAdmin(Player player, ConfirmHolder holder) {
         String actor = "player:" + player.getUniqueId();
         if (holder.action == AdminAction.REQUEST_ISSUE) {
@@ -321,7 +340,9 @@ public final class BloecoMenu implements Listener {
         }
         if (slot != 21) return false;
         if (holder instanceof PaymentHolder) openRecipients(player);
-        else if (holder instanceof TaxHolder || holder instanceof ConfirmHolder || holder instanceof OverviewHolder) {
+        else if (holder instanceof ConfirmHolder confirmation) {
+            openAmountSelection(player, confirmation.action);
+        } else if (holder instanceof TaxHolder || holder instanceof AmountHolder || holder instanceof OverviewHolder) {
             openAdministration(player);
         } else {
             open(player);
@@ -336,11 +357,6 @@ public final class BloecoMenu implements Listener {
 
     private static String basisPoints(int value) {
         return java.math.BigDecimal.valueOf(value, 2).stripTrailingZeros().toPlainString() + "%";
-    }
-
-    private static Money amountFor(ClickType click) {
-        if (click.isShiftClick()) return AMOUNTS.get(2);
-        return click.isRightClick() ? AMOUNTS.get(1) : AMOUNTS.get(0);
     }
 
     private static Inventory inventory(Holder holder, String title) {
@@ -383,6 +399,14 @@ public final class BloecoMenu implements Listener {
         private final Map<TaxCategory, Integer> rates = new LinkedHashMap<>();
         private TaxHolder(BloecoMenu menu) { super(menu); }
     }
+    private static final class AmountHolder extends Holder {
+        private final AdminAction action;
+        private final Map<Integer, Money> amounts = new LinkedHashMap<>();
+        private AmountHolder(BloecoMenu menu, AdminAction action) {
+            super(menu);
+            this.action = action;
+        }
+    }
     private static final class ConfirmHolder extends Holder {
         private final AdminAction action;
         private final Money amount;
@@ -391,8 +415,15 @@ public final class BloecoMenu implements Listener {
         }
     }
     private enum AdminAction {
-        REQUEST_ISSUE("申请发行"), RETIRE("回收货币");
+        REQUEST_ISSUE("发行", "发行", Material.EMERALD_BLOCK),
+        RETIRE("回收", "回收", Material.COAL_BLOCK);
         private final String title;
-        AdminAction(String title) { this.title = title; }
+        private final String amountTitle;
+        private final Material material;
+        AdminAction(String title, String amountTitle, Material material) {
+            this.title = title;
+            this.amountTitle = amountTitle;
+            this.material = material;
+        }
     }
 }

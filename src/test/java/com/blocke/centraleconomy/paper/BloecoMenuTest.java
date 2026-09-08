@@ -103,6 +103,37 @@ class BloecoMenuTest {
         assertNavigation(player);
     }
 
+    @Test
+    @SuppressWarnings("deprecation")
+    void issuanceAndRetirementExposeThreeVisiblePresetAmounts() {
+        var plugin = MockBukkit.createMockPlugin();
+        var player = server.addPlayer("MonetaryAdministrator");
+        player.addAttachment(plugin, RoleAccess.MONETARY, true);
+        BloecoMenu menu = new BloecoMenu(plugin, economy, new RoleAccess());
+
+        menu.open(player);
+        player.simulateInventoryClick(16);
+        player.simulateInventoryClick(12);
+
+        assertEquals("Bloeco 选择发行金额", player.getOpenInventory().getTitle());
+        assertEquals("发行 100.00 金币", displayName(player, 10));
+        assertEquals("发行 1000.00 金币", displayName(player, 12));
+        assertEquals("发行 10000.00 金币", displayName(player, 14));
+
+        player.simulateInventoryClick(21);
+        player.simulateInventoryClick(14);
+
+        assertEquals("Bloeco 选择回收金额", player.getOpenInventory().getTitle());
+        assertEquals("回收 100.00 金币", displayName(player, 10));
+        assertEquals("回收 1000.00 金币", displayName(player, 12));
+        assertEquals("回收 10000.00 金币", displayName(player, 14));
+    }
+
+    @SuppressWarnings("deprecation")
+    private static String displayName(org.mockbukkit.mockbukkit.entity.PlayerMock player, int slot) {
+        return player.getOpenInventory().getTopInventory().getItem(slot).getItemMeta().getDisplayName();
+    }
+
     private static void assertNavigation(org.mockbukkit.mockbukkit.entity.PlayerMock player) {
         assertNotNull(player.getOpenInventory().getTopInventory().getItem(21), "missing back button");
         assertNotNull(player.getOpenInventory().getTopInventory().getItem(22), "missing home button");
