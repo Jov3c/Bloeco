@@ -13,6 +13,7 @@ import java.time.Clock;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BloecoMenuTest {
@@ -56,5 +57,54 @@ class BloecoMenuTest {
         menu.open(player);
 
         assertNotNull(player.getOpenInventory().getTopInventory().getItem(16));
+    }
+
+    @Test
+    void everyChildMenuProvidesBackAndHomeNavigation() {
+        var plugin = MockBukkit.createMockPlugin();
+        var player = server.addPlayer("Administrator");
+        server.addPlayer("Recipient");
+        player.addAttachment(plugin, RoleAccess.MONETARY, true);
+        player.addAttachment(plugin, RoleAccess.TAX, true);
+        player.addAttachment(plugin, RoleAccess.AUDITOR, true);
+        BloecoMenu menu = new BloecoMenu(plugin, economy, new RoleAccess());
+
+        menu.open(player);
+        assertNotNull(player.getOpenInventory().getTopInventory().getItem(22));
+
+        player.simulateInventoryClick(14);
+        assertNavigation(player);
+        player.simulateInventoryClick(0);
+        assertNavigation(player);
+        player.simulateInventoryClick(21);
+        assertEquals("Bloeco 转账 - 选择玩家", player.getOpenInventory().getTitle());
+        player.simulateInventoryClick(22);
+        assertEquals("Bloeco 经济中心", player.getOpenInventory().getTitle());
+
+        player.simulateInventoryClick(4);
+        assertNavigation(player);
+        player.simulateInventoryClick(21);
+        assertEquals("Bloeco 经济中心", player.getOpenInventory().getTitle());
+
+        player.simulateInventoryClick(16);
+        assertNavigation(player);
+        player.simulateInventoryClick(10);
+        assertNavigation(player);
+        player.simulateInventoryClick(21);
+        assertEquals("Bloeco 中央银行", player.getOpenInventory().getTitle());
+
+        player.simulateInventoryClick(12);
+        assertNavigation(player);
+        player.simulateInventoryClick(22);
+        assertEquals("Bloeco 经济中心", player.getOpenInventory().getTitle());
+
+        player.simulateInventoryClick(16);
+        player.simulateInventoryClick(18);
+        assertNavigation(player);
+    }
+
+    private static void assertNavigation(org.mockbukkit.mockbukkit.entity.PlayerMock player) {
+        assertNotNull(player.getOpenInventory().getTopInventory().getItem(21), "missing back button");
+        assertNotNull(player.getOpenInventory().getTopInventory().getItem(22), "missing home button");
     }
 }

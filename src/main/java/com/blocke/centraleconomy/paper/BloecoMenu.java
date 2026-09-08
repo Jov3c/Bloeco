@@ -49,6 +49,7 @@ public final class BloecoMenu implements Listener {
         if (roles.anyAdministration(player)) {
             inventory.setItem(16, item(Material.NETHER_STAR, "中央银行管理", List.of("按权限显示可用功能")));
         }
+        inventory.setItem(22, item(Material.BARRIER, "关闭", List.of("关闭 Bloeco 菜单")));
         player.openInventory(inventory);
         economy.playerBalance(player.getUniqueId()).thenAccept(result -> runMain(() -> {
             if (!(player.getOpenInventory().getTopInventory().getHolder() instanceof HubHolder current)
@@ -65,12 +66,13 @@ public final class BloecoMenu implements Listener {
         Inventory inventory = inventory(holder, "Bloeco 转账 - 选择玩家");
         int slot = 0;
         for (Player candidate : Bukkit.getOnlinePlayers()) {
-            if (candidate.equals(sender) || slot >= SIZE) continue;
+            if (candidate.equals(sender) || slot >= 21) continue;
             holder.recipients.put(slot, candidate.getUniqueId());
             inventory.setItem(slot++, item(Material.PLAYER_HEAD, candidate.getName(), List.of("点击选择收款人")));
         }
-        if (slot == 0) sender.sendMessage("当前没有其他在线玩家可以收款。");
-        else sender.openInventory(inventory);
+        if (slot == 0) inventory.setItem(13, item(Material.PAPER, "暂无收款人", List.of("当前没有其他在线玩家")));
+        addNavigation(inventory);
+        sender.openInventory(inventory);
     }
 
     private void openPayment(Player sender, Player recipient) {
@@ -83,7 +85,7 @@ public final class BloecoMenu implements Listener {
             inventory.setItem(slot, item(Material.EMERALD, "支付 " + MessageFormatter.money(amount),
                     List.of("收款人：" + recipient.getName(), "点击提交中央清算")));
         }
-        inventory.setItem(22, item(Material.ARROW, "返回", List.of("返回收款人列表")));
+        addNavigation(inventory);
         sender.openInventory(inventory);
     }
 
@@ -101,6 +103,7 @@ public final class BloecoMenu implements Listener {
             inventory.setItem(16, item(Material.COMPARATOR, "校验总账", List.of("重算分录与账户余额")));
             inventory.setItem(18, item(Material.MAP, "经济总览", List.of("货币供给、流通、国库与税费")));
         }
+        addNavigation(inventory);
         player.openInventory(inventory);
     }
 
@@ -111,6 +114,7 @@ public final class BloecoMenu implements Listener {
         holder.categories.put(15, TaxCategory.PLAYER_TRANSFER_INCOME);
         inventory.setItem(11, item(Material.PAPER, "转账手续费", List.of("正在读取…", "左键 +1%，右键 -1%")));
         inventory.setItem(15, item(Material.PAPER, "个人所得税", List.of("正在读取…", "左键 +1%，右键 -1%")));
+        addNavigation(inventory);
         player.openInventory(inventory);
         refreshTaxSlot(player, holder, 11, TaxCategory.PLAYER_TRANSFER_FEE, "转账手续费");
         refreshTaxSlot(player, holder, 15, TaxCategory.PLAYER_TRANSFER_INCOME, "个人所得税");
@@ -133,6 +137,7 @@ public final class BloecoMenu implements Listener {
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player) || event.getRawSlot() < 0 || event.getRawSlot() >= SIZE) return;
         int slot = event.getRawSlot();
+        if (handleNavigation(player, holder, slot)) return;
         if (holder instanceof HubHolder) {
             if (slot == 4) openJournal(player);
             else if (slot == 14) openRecipients(player);
@@ -143,8 +148,7 @@ public final class BloecoMenu implements Listener {
             if (recipient == null) player.sendMessage("该收款人已离线，请重新选择。");
             else openPayment(player, recipient);
         } else if (holder instanceof PaymentHolder payment) {
-            if (slot == 22) openRecipients(player);
-            else settlePayment(player, payment, slot);
+            settlePayment(player, payment, slot);
         } else if (holder instanceof AdminHolder) {
             if (slot == 10 && roles.allows(player, RoleAccess.TAX)) openTaxes(player);
             else if (slot == 12 && roles.allows(player, RoleAccess.MONETARY))
@@ -169,11 +173,13 @@ public final class BloecoMenu implements Listener {
         JournalHolder holder = new JournalHolder(this);
         Inventory inventory = inventory(holder, "Bloeco 我的账单");
         inventory.setItem(13, item(Material.CLOCK, "正在读取中央账本…", List.of()));
+        addNavigation(inventory);
         player.openInventory(inventory);
-        economy.recentJournal(com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId()), SIZE)
+        economy.recentJournal(com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId()), 21)
                 .thenAccept(result -> runMain(() -> {
                     if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
                     inventory.clear();
+                    addNavigation(inventory);
                     if (!result.isSuccess()) {
                         inventory.setItem(13, item(Material.BARRIER, "读取失败", List.of(MessageFormatter.error(result))));
                         return;
@@ -195,10 +201,12 @@ public final class BloecoMenu implements Listener {
         OverviewHolder holder = new OverviewHolder(this);
         Inventory inventory = inventory(holder, "Bloeco 经济总览");
         inventory.setItem(13, item(Material.CLOCK, "正在汇总中央账本…", List.of()));
+        addNavigation(inventory);
         player.openInventory(inventory);
         economy.snapshot().thenAccept(result -> runMain(() -> {
             if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
             inventory.clear();
+            addNavigation(inventory);
             if (!result.isSuccess()) {
                 inventory.setItem(13, item(Material.BARRIER, "汇总失败", List.of(MessageFormatter.error(result))));
                 return;
@@ -215,7 +223,7 @@ public final class BloecoMenu implements Listener {
             inventory.setItem(16, item(Material.PAPER, "财政收入", List.of(
                     "税收：" + MessageFormatter.moneyMinor(snapshot.taxRevenueMinor()),
                     "手续费：" + MessageFormatter.moneyMinor(snapshot.feeRevenueMinor()))));
-            inventory.setItem(22, item(economy.isReadOnly() ? Material.REDSTONE_BLOCK : Material.LIME_WOOL,
+            inventory.setItem(20, item(economy.isReadOnly() ? Material.REDSTONE_BLOCK : Material.LIME_WOOL,
                     economy.isReadOnly() ? "只读保护中" : "账本可写", List.of("完整性状态")));
         }));
     }
@@ -252,6 +260,7 @@ public final class BloecoMenu implements Listener {
         inventory.setItem(11, item(Material.LIME_WOOL, "确认：" + action.title,
                 List.of("金额：" + MessageFormatter.money(amount), "操作将进入永久审计记录")));
         inventory.setItem(15, item(Material.BARRIER, "取消", List.of("不执行任何操作")));
+        addNavigation(inventory);
         player.openInventory(inventory);
     }
 
@@ -296,6 +305,33 @@ public final class BloecoMenu implements Listener {
 
     private void runMain(Runnable action) {
         if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, action);
+    }
+
+    private boolean handleNavigation(Player player, Holder holder, int slot) {
+        if (holder instanceof HubHolder) {
+            if (slot == 22) {
+                player.closeInventory();
+                return true;
+            }
+            return false;
+        }
+        if (slot == 22) {
+            open(player);
+            return true;
+        }
+        if (slot != 21) return false;
+        if (holder instanceof PaymentHolder) openRecipients(player);
+        else if (holder instanceof TaxHolder || holder instanceof ConfirmHolder || holder instanceof OverviewHolder) {
+            openAdministration(player);
+        } else {
+            open(player);
+        }
+        return true;
+    }
+
+    private static void addNavigation(Inventory inventory) {
+        inventory.setItem(21, item(Material.ARROW, "返回上一级", List.of("返回上一层菜单")));
+        inventory.setItem(22, item(Material.COMPASS, "主菜单", List.of("返回 Bloeco 经济中心")));
     }
 
     private static String basisPoints(int value) {
