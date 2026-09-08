@@ -13,6 +13,7 @@ import com.blocke.centraleconomy.domain.tax.TaxCategory;
 import com.blocke.centraleconomy.domain.tax.TaxRule;
 import com.blocke.centraleconomy.storage.sqlite.LegacySqliteMigrator;
 import com.blocke.centraleconomy.storage.sqlite.SqliteLedgerStore;
+import com.blocke.centraleconomy.storage.mysql.MySqlLedgerStore;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -74,6 +75,20 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             new LegacySqliteMigrator().migrateIfRequired(path);
             return new SqliteLedgerStore(path);
         }, clock, initialTreasury);
+    }
+
+    public static AsyncEconomyFacade mysql(
+            String jdbcUrl, String username, String password, int maximumPoolSize, Clock clock) {
+        return new AsyncEconomyFacade(
+                () -> new MySqlLedgerStore(jdbcUrl, username, password, maximumPoolSize), clock);
+    }
+
+    public static AsyncEconomyFacade mysql(
+            String jdbcUrl, String username, String password, int maximumPoolSize,
+            Clock clock, Money initialTreasury) {
+        return new AsyncEconomyFacade(
+                () -> new MySqlLedgerStore(jdbcUrl, username, password, maximumPoolSize),
+                clock, initialTreasury);
     }
 
     public CompletionStage<Result<Void>> readyStage() {

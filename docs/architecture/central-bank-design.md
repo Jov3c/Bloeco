@@ -1,9 +1,9 @@
 # Bloeco 中央银行经济内核设计
 
-**状态：** 已确认方向，等待书面规格复核  
+**状态：** V2 正式基线（MySQL/Redis）
 **目标平台：** Paper 1.21.11、Java 21  
-**默认存储：** SQLite  
-**可选存储：** MySQL；Redis 仅作可重建的加速层
+**默认存储：** MySQL 8.4 / InnoDB
+**兼容存储：** SQLite 仅用于开发、离线测试和迁移；Redis 7 仅作可重建缓存与事件层
 
 ## 1. 产品定位
 
@@ -23,7 +23,7 @@ Bloeco 不实现商店、证券、拍卖、任务、商品定价、库存或物�
 6. 国库余额不足时，预算、奖励和插件拨款必须失败，不得自动补发货币。
 7. 已入账凭证不可修改或删除。纠错使用关联原凭证的冲正凭证。
 8. 只有 SQL 事务提交成功，调用才算成功。超时或结果不确定时失败关闭，不猜测成功。
-9. Redis 故障不得改变余额、阻止 SQL 提交或成为恢复账本所必需的条件。
+9. Redis 故障不得改变余额、回滚已提交 SQL 或成为恢复账本所必需的条件；MySQL 故障则进入只读/不可用保护。
 10. Paper 主线程不得执行 JDBC、Redis或数据库迁移。
 
 ## 3. 总账与分级账本
@@ -192,23 +192,23 @@ interface BloecoApi {
 
 ```yaml
 storage:
-  type: sqlite
+  type: mysql
+  mysql:
+    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4
+    username: bloeco
+    password-env: BLOECO_MYSQL_PASSWORD
+    maximum-pool-size: 16
   sqlite:
     file: economy.db
-  mysql:
-    host: 127.0.0.1
-    port: 3306
-    database: bloeco
-    username: bloeco
-    password: ""
-    pool-size: 8
 
 redis:
-  enabled: false
+  enabled: true
   uri: redis://127.0.0.1:6379/0
+  key-prefix: bloeco:v2:
+  stream: bloeco:v2:ledger-events
 ```
 
-默认使用 `plugins/Bloeco/economy.db`，兼容现有部署路径。切换 MySQL 必须由显式迁移工具完成，不能只改配置后自动得到一套空经济。
+生产默认使用 MySQL。切换到 MySQL 必须由显式迁移/校验流程完成，不能只改配置后自动得到一套空经济；Bloeco 不会在 MySQL 不可用时静默回退到 SQLite。
 
 ### 8.2 SQLite
 
@@ -219,26 +219,27 @@ redis:
 - 单写入执行器串行提交
 - 插件关闭时停止接收新写入、等待队列清空后关闭连接
 
-### 8.3 MySQL
+### 8.3 MySQL（生产权威）
 
 - InnoDB、`utf8mb4`、HikariCP
 - `READ COMMITTED` 事务隔离
 - 按稳定顺序锁定受影响账户行，避免死锁
 - 唯一约束保证幂等
-- 第一版使用数据库级写入者租约，保证同一 Bloeco 数据库只有一个活动写入实例
+- `outbox_events` 与账本事务一起写入，保证 Redis 事件最终可补发
+- 使用数据库级写入者租约，保证同一 Bloeco 数据库只有一个活动写入实例
 
 SQLite 和 MySQL 必须通过同一套存储契约测试。两者的余额、幂等、并发、回滚、冲正和供给统计结果必须一致。
 
 ### 8.4 Redis
 
-Redis 默认关闭，只允许保存：
+Redis 默认开启，只允许保存：
 
 - 短期余额查询缓存；
 - 提交后的失效通知；
 - GUI 统计快照；
 - 可重建的运行指标。
 
-写流程固定为“提交 SQL -> 清除本地缓存 -> 尝试发布 Redis 失效消息”。Redis 发布失败只记录降级状态，不回滚已提交的 SQL。缓存未命中或不可用时读取 SQL。
+写流程固定为“提交 MySQL 账本与 outbox -> 清除缓存 -> 发布 Redis Stream 事件”。Redis 发布失败只记录降级状态，后台依据 outbox 重试，不回滚已提交的 SQL。缓存未命中或不可用时读取 MySQL。
 
 ## 9. 数据模型
 
@@ -246,22 +247,26 @@ Redis 默认关闭，只允许保存：
 
 - `schema_history`
 - `institutions`
-- `institution_capabilities`
 - `accounts`
 - `account_balances`
+- `fund_reservations`
 - `journal_entries`
 - `postings`
 - `idempotency_records`
+- `settlements`
+- `settlement_items`
+- `settlement_batches`
 - `tax_rules`
 - `issuance_requests`
 - `policy_limits`
 - `audit_events`
 - `daily_monetary_metrics`
+- `outbox_events`
 
 关键约束：
 
 - `postings(entry_id, line_no)` 唯一；
-- `idempotency_records(client_id, idempotency_key)` 唯一；
+- `idempotency_records(client_id/scope_key, idempotency_key)` 唯一；Bloeco V2 API 对外称 `scope_key`，当前 Java 存储端以 `client_id` 兼容旧调用；
 - 玩家钱包 `(owner_type, owner_id, purpose)` 唯一；
 - 普通账户物化余额不得小于零；
 - 每个凭证至少两条分录；
@@ -343,7 +348,7 @@ Bloeco-Stock 专用 UUID 和专用拨款入口不进入新核心。未来所有�
 3. 新玩家余额为零；除发行外没有任何路径可增加净货币供给。
 4. 玩家转账的本金、税收和手续费在一个凭证中原子结算。
 5. 两个测试插件拥有互相隔离的机构账户和子账本。
-6. SQLite 是默认且通过完整测试；MySQL 通过相同存储契约测试。
+6. MySQL 是默认且通过存储契约测试；SQLite 通过相同契约用于开发和迁移。
 7. Redis 完全不可用时，所有权威读写仍然正确。
 8. 并发和重试不会造成重复扣款、负余额或不平衡凭证。
 9. 旧数据迁移前有可恢复备份，迁移后余额与供给校验一致。
@@ -353,14 +358,14 @@ Bloeco-Stock 专用 UUID 和专用拨款入口不进入新核心。未来所有�
 
 ### 阶段一：不可增发的中央总账
 
-移除 Vault 与 Bloeco-Stock 专用入口，建立复式凭证、分级账户、SQLite 默认存储、旧库迁移、玩家余额/转账、税费、国库、受控发行与回收。
+移除 Vault 与 Bloeco-Stock 专用入口，建立复式凭证、分级账户、MySQL 默认存储、SQLite 迁移、玩家余额/转账、税费、国库、受控发行与回收。
 
-### 阶段二：机构接入与 MySQL
+### 阶段二：机构接入与数据治理
 
-提供原生异步 API、插件注册和能力隔离、支付意图、插件子账本、MySQL 实现及跨数据库存储契约测试。
+提供原生异步 API、插件注册和能力隔离、支付意图、插件子账本及跨数据库存储契约测试。
 
 ### 阶段三：Redis 与经济治理
 
-加入可选 Redis、统计快照、供给增长限制、审计 GUI、备份工具、只读保护模式和性能/故障测试。
+完善 outbox 发布器、统计快照、供给增长限制、审计 GUI、备份工具、只读保护模式和性能/故障测试。
 
 每个阶段都必须产生可安装、可回滚、通过自动测试的 Paper 插件包；不得以未完成的后续阶段作为当前阶段账本正确性的前提。

@@ -6,7 +6,8 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 
 ## 当前功能
 
-- SQLite 默认权威存储：`plugins/Bloeco/economy.db`，启用 WAL、外键与完整同步。
+- MySQL 8.4/InnoDB 默认权威存储：账户、余额、分录、税费、发行、幂等和审计都在同一事务中提交。
+- Redis 7 默认作为可重建缓存与 Redis Stream 事件层；Redis 永远不是余额或账本真相源，断开时不影响 MySQL 账本。
 - 整数最小货币单位：金额全程使用 `long`，拒绝浮点误差与超过两位小数的玩家输入。
 - 分级账户：货币当局、财政、机构、玩家四级分类；每个余额都能追溯到复式分录。
 - 受控发行：申请、异人审批、执行三步完成；新货币只能先进入国库，并受单笔、每日和滚动周期政策限制。
@@ -56,13 +57,27 @@ bootstrap:
 
 默认税制为转账手续费 1%、收款个人所得税 5%。它们把货币转入财政账户，不会自动销毁货币；管理员需要通过国库回收操作形成真正的货币退出机制。
 
-## 存储路线
+## 存储配置
 
-Phase 1 仅实现 SQLite。代码通过独立存储边界设计，MySQL 权威后端属于 Phase 2；Redis 只会作为可重建缓存与跨服通知层，永远不会成为余额或账单真相源。配置为不支持的存储类型时插件会拒绝启动，避免静默降级或产生双账本。
+生产默认使用 MySQL，配置位于 `config.yml`：
+
+```yaml
+storage:
+  type: mysql
+  mysql:
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4"
+    username: bloeco
+    password-env: BLOECO_MYSQL_PASSWORD
+redis:
+  enabled: true
+  uri: "redis://127.0.0.1:6379/0"
+```
+
+SQLite 仍保留为开发、离线测试和迁移模式，必须显式设置 `storage.type: sqlite`；MySQL 故障时不会静默回退到 SQLite。完整约束见 [MySQL/Redis V2 存储规范](docs/architecture/storage-v2-mysql-redis.md)。
 
 ## 第三方开发
 
-请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。当前 Phase 1 尚未发布第三方原生 API；商店等插件可以按规范设计业务层，但在 API 正式提供前不应直连 Bloeco SQLite，也不应通过反射调用内部类。
+请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。商店、证券、任务等插件不得直连 Bloeco 数据库或 Redis，必须通过异步原生 API 提交带机构、业务类型、中文说明和幂等键的结算。
 
 完整的中央银行设计见 [系统设计](docs/architecture/central-bank-design.md)。
 
@@ -74,4 +89,4 @@ Phase 1 仅实现 SQLite。代码通过独立存储边界设计，MySQL 权威�
 ./gradlew clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.1.2.jar`。SQLite 驱动已经打入插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.2.0.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。

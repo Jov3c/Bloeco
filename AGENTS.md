@@ -13,16 +13,18 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - Java 21.
 - Paper API `1.21.11-R0.1-SNAPSHOT`.
 - Gradle 8 with Kotlin build scripts and the Shadow plugin.
-- SQLite JDBC `3.47.1.0`; SQLite is the only implemented authoritative backend.
+- MySQL Connector/J `9.1.0` with HikariCP `6.2.1`; MySQL 8.4/InnoDB is the production authority.
+- SQLite JDBC `3.47.1.0` remains an explicit development/test/import backend, never an automatic failover.
 - JUnit 5 and MockBukkit for automated tests.
-- MySQL is a planned authoritative backend behind the same `LedgerStore` boundary.
-- Redis is planned only for rebuildable cache invalidation and cross-server notifications. Redis must never be a balance or journal source of truth.
+- Lettuce `6.5.0.RELEASE` connects to Redis 7 for rebuildable cache and Redis Stream notifications. Redis must never be a balance or journal source of truth.
 
 ## Source layout
 
 - `domain/`: immutable money, account, tax, posting, and journal rules. It must not depend on Paper, JDBC, or GUI classes.
 - `application/`: central-bank, payment, tax, query, result, and asynchronous use cases. `LedgerStore` is the persistence port.
-- `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration.
+- `storage/mysql/`: MySQL/InnoDB schema, pooled JDBC commits, integrity verification, and the outbox table.
+- `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration for local/import use.
+- `storage/redis/`: optional cache and Stream bridge; connection failure is a non-authoritative degradation.
 - `paper/`: plugin lifecycle adapters, `/eco`, `/pay`, permissions, GUI screens, and player-facing formatting.
 - `src/main/resources/`: `plugin.yml` and default configuration.
 - `src/test/`: domain, storage, application, command, and GUI regression tests.
@@ -59,7 +61,7 @@ Do not add public administration subcommands. Add administration flows to the pe
 
 ## Third-party integration
 
-The public native API is not released in Phase 1. Until it exists, another plugin must not read Bloeco SQLite, invoke internal classes by reflection, or use Vault as a substitute.
+The public native API is versioned separately from the internal store. Until a compatible API artifact is published, another plugin must not read Bloeco MySQL/SQLite tables, invoke internal classes by reflection, or use Redis as a substitute. See `docs/architecture/storage-v2-mysql-redis.md` and `docs/third-party-economy-integration.md`.
 
 When implementing the native API, keep it asynchronous and versioned. A plugin registers a stable institution `clientId`; Bloeco creates and owns its institution accounts. Settlement requests carry a stable idempotency key and return a permanent journal ID. A shop marks an order paid and delivers items only after Bloeco returns a committed receipt. Timeouts remain result-unknown and must be queried or retried with the same key. See `docs/third-party-economy-integration.md` for the planned request lifecycle, refund rules, and error contract.
 

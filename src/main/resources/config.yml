@@ -11,13 +11,25 @@ bootstrap:
   player-initial-balance: "100.00"
 
 storage:
-  type: sqlite
+  # Production authority. Use sqlite only for local development/imports.
+  type: mysql
+  mysql:
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4"
+    username: "bloeco"
+    # Prefer an environment variable over putting credentials in this file.
+    password-env: "BLOECO_MYSQL_PASSWORD"
+    password: ""
+    maximum-pool-size: 16
   sqlite:
     file: economy.db
 
-# Redis is an optional, rebuildable accelerator. It is never the source of truth.
+# Redis is a rebuildable cache and event transport. It is never the source of truth.
 redis:
-  enabled: false
+  enabled: true
+  uri: "redis://127.0.0.1:6379/0"
+  key-prefix: "bloeco:v2:"
+  stream: "bloeco:v2:ledger-events"
+  cache-ttl-seconds: 60
 
 integrity:
   check-interval-minutes: 15

@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.blocke"
-version = "1.1.2"
+version = "1.2.0"
 
 repositories {
     mavenCentral()
@@ -15,6 +15,9 @@ repositories {
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
+    implementation("com.mysql:mysql-connector-j:9.1.0")
+    implementation("com.zaxxer:HikariCP:6.2.1")
+    implementation("io.lettuce:lettuce-core:6.5.0.RELEASE")
     testImplementation("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testImplementation("org.mockbukkit.mockbukkit:mockbukkit-v1.21:4.110.0") {
@@ -37,6 +40,7 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
+    systemProperty("bloeco.test.storage", "sqlite")
 }
 
 tasks.jar {

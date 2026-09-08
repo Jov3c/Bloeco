@@ -26,6 +26,12 @@ public final class BloecoRuntime implements AutoCloseable {
         return new BloecoRuntime(AsyncEconomyFacade.sqlite(databasePath, Clock.systemUTC(), initialTreasury));
     }
 
+    public static BloecoRuntime mysql(String jdbcUrl, String username, String password,
+                                      int maximumPoolSize, Money initialTreasury) {
+        return new BloecoRuntime(AsyncEconomyFacade.mysql(
+                jdbcUrl, username, password, maximumPoolSize, Clock.systemUTC(), initialTreasury));
+    }
+
     public AsyncEconomyFacade facade() { return facade; }
     public CompletionStage<Result<Void>> readyStage() { return facade.readyStage(); }
     public CompletionStage<Result<IntegrityReport>> verifyNow() { return facade.verifyIntegrity(); }
