@@ -70,6 +70,11 @@ final class JournalDisplay {
             case TREASURY_RECLAIM -> "国库收回";
             case PLAYER_TRANSFER -> "玩家转账";
             case PLUGIN_TRANSFER -> "插件结算";
+            case BANK_CAPITAL_INJECTION -> "银行注资";
+            case BANK_DEPOSIT -> "银行存款";
+            case BANK_WITHDRAWAL -> "银行取款";
+            case LOAN_DISBURSEMENT -> "贷款发放";
+            case LOAN_REPAYMENT -> "贷款还款";
             case REVERSAL -> "账单冲正";
             case LEGACY_EXTERNAL -> "历史账单";
         };

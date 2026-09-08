@@ -4,7 +4,7 @@ This file is the first technical reference for coding agents working in this rep
 
 ## Product boundary
 
-Bloeco is the mandatory foundation of the Bloeco economy-plugin family and the single authoritative central-bank ledger for Paper 1.21.11. Every later Bloeco commerce, securities, auction, quest-reward, land, or minigame plugin must integrate with this project for accounts and settlement. Bloeco owns currency supply, Treasury funds, player balances, taxes, fees, journal entries, integrity checks, and institution accounts.
+Bloeco is the mandatory foundation of the Bloeco economy-plugin family and the single authoritative central-bank ledger for Paper 1.21.11. Every later Bloeco commerce, securities, auction, quest-reward, land, or minigame plugin must integrate with this project for accounts and settlement. Bloeco owns currency supply, Treasury funds, player balances, taxes, fees, journal entries, integrity checks, institution accounts, and the state-owned bank.
 
 Bloeco does not implement shops, auctions, securities, quests, item delivery, product pricing, or inventory management. It currently does not depend on or register Vault. A family plugin keeps only its own orders, products, positions, or other business state, while Bloeco remains the sole owner of spendable balances and monetary journals. Integration uses the versioned native API when that API is released.
 
@@ -21,6 +21,8 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 ## Source layout
 
 - `domain/`: immutable money, account, tax, posting, and journal rules. It must not depend on Paper, JDBC, or GUI classes.
+- `domain/banking/`: bank policy and immutable customer/balance-sheet snapshots.
+- `application/banking/`: the asynchronous banking boundary and persistence port.
 - `application/`: central-bank, payment, tax, query, result, and asynchronous use cases. `LedgerStore` is the persistence port.
 - `storage/mysql/`: MySQL/InnoDB schema, pooled JDBC commits, integrity verification, and the outbox table.
 - `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration for local/import use.
@@ -45,6 +47,8 @@ These constraints are mandatory:
 8. Every retryable write uses a stable `clientId + idempotencyKey`. Same key and same request returns the original result; conflicting content fails closed.
 9. The configured genesis Treasury issue runs only against an empty journal. Player starter funds come from Treasury and are permanently limited to one allocation per player UUID.
 10. A failed integrity check makes the application read-only. Do not introduce a fallback balance store.
+11. Bank capital is a real Treasury-to-`bank:cash` transfer, deposits only move wallet cash, and loans only disburse existing `bank:cash`. Never implement a bank action by calling issuance.
+12. Bank writes require stable idempotency keys. Reserve-ratio and cash checks are commit-time rules, not GUI estimates.
 
 ## Concurrency and Paper rules
 
@@ -58,6 +62,8 @@ The public commands are exactly:
 - `/pay <online-player> <positive-integer>`: quick player transfer with completion.
 
 Do not add public administration subcommands. Add administration flows to the permission-gated GUI and keep a Back and Main Menu button on every child screen. Permissions are the `bloeco.role.*` nodes declared in `plugin.yml`.
+
+Player banking is under `/eco -> 国有银行`; bank policy is under `/eco -> 中央银行管理 -> 银行管理`. The banker permission is `bloeco.role.banker` and does not imply monetary or tax authority. Banking tables are owned exclusively by Bloeco. External plugins must not create deposits or loans by writing those tables.
 
 ## Third-party integration
 

@@ -1,6 +1,10 @@
 package com.blocke.centraleconomy.paper;
 
 import com.blocke.centraleconomy.application.AsyncEconomyFacade;
+import com.blocke.centraleconomy.application.banking.AsyncBankingFacade;
+import com.blocke.centraleconomy.domain.banking.BankingPolicy;
+import com.blocke.centraleconomy.domain.money.Money;
+import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,6 +131,42 @@ class BloecoMenuTest {
         assertEquals("回收 100.00 金币", displayName(player, 10));
         assertEquals("回收 1000.00 金币", displayName(player, 12));
         assertEquals("回收 10000.00 金币", displayName(player, 14));
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void ecoContainsPlayerBankAndPermissionProtectedBankAdministration() {
+        Path database = temporaryDirectory.resolve("bank-menu.db");
+        Clock clock = Clock.systemUTC();
+        try (AsyncEconomyFacade bankEconomy = AsyncEconomyFacade.sqlite(
+                database, clock, Money.parse("1000000"));
+             AsyncBankingFacade bank = new AsyncBankingFacade(
+                     () -> new SqliteBankingStore(database, clock), bankEconomy.readyStage(),
+                     Money.parse("250000"),
+                     new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7))) {
+            assertTrue(bank.readyStage().toCompletableFuture().join().isSuccess());
+            var plugin = MockBukkit.createMockPlugin();
+            var player = server.addPlayer("BankCustomer");
+            BloecoMenu menu = new BloecoMenu(plugin, bankEconomy, bank, new RoleAccess());
+
+            menu.open(player);
+            assertEquals("国有银行", displayName(player, 12));
+            player.simulateInventoryClick(12);
+            assertEquals("Bloeco 国有银行", player.getOpenInventory().getTitle());
+            assertNavigation(player);
+            player.simulateInventoryClick(10);
+            assertEquals("Bloeco 银行 - 存款", player.getOpenInventory().getTitle());
+            assertNavigation(player);
+            player.simulateInventoryClick(22);
+
+            player.addAttachment(plugin, RoleAccess.BANKER, true);
+            menu.open(player);
+            player.simulateInventoryClick(16);
+            assertEquals("银行管理", displayName(player, 20));
+            player.simulateInventoryClick(20);
+            assertEquals("Bloeco 银行管理", player.getOpenInventory().getTitle());
+            assertNavigation(player);
+        }
     }
 
     @SuppressWarnings("deprecation")

@@ -7,6 +7,7 @@ import com.blocke.centraleconomy.paper.PayCommand;
 import com.blocke.centraleconomy.paper.RoleAccess;
 import com.blocke.centraleconomy.paper.PlayerStarterFundsListener;
 import com.blocke.centraleconomy.domain.money.Money;
+import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.storage.redis.RedisEconomyBridge;
 import com.blocke.centraleconomy.storage.mysql.MySqlOutboxPublisher;
 import java.time.Duration;
@@ -33,10 +34,12 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 "bootstrap.treasury-initial-balance", "1000000.00");
         Money initialPlayerBalance = configuredPositiveMoney(
                 "bootstrap.player-initial-balance", "100.00");
-        runtime = createRuntime(storageType, initialTreasury);
+        Money bankCapital = configuredPositiveMoney("bank.initial-capital", "250000.00");
+        BankingPolicy bankPolicy = configuredBankPolicy();
+        runtime = createRuntime(storageType, initialTreasury, bankCapital, bankPolicy);
         connectRedisIfEnabled(storageType);
         RoleAccess roles = new RoleAccess();
-        BloecoMenu menu = new BloecoMenu(this, runtime.facade(), roles);
+        BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
         PayCommand pay = new PayCommand(this, runtime.facade());
         getCommand("pay").setExecutor(pay);
         getCommand("pay").setTabCompleter(pay);
@@ -72,10 +75,12 @@ public class CentralEconomyPlugin extends JavaPlugin {
         return runtime;
     }
 
-    private BloecoRuntime createRuntime(String storageType, Money initialTreasury) {
+    private BloecoRuntime createRuntime(String storageType, Money initialTreasury,
+                                        Money bankCapital, BankingPolicy bankPolicy) {
         if ("sqlite".equalsIgnoreCase(storageType)) {
             return BloecoRuntime.sqlite(getDataFolder().toPath().resolve(
-                    getConfig().getString("storage.sqlite.file", "economy.db")), initialTreasury);
+                    getConfig().getString("storage.sqlite.file", "economy.db")),
+                    initialTreasury, bankCapital, bankPolicy);
         }
         if (!"mysql".equalsIgnoreCase(storageType)) {
             throw new IllegalArgumentException("storage.type must be mysql or sqlite");
@@ -87,7 +92,24 @@ public class CentralEconomyPlugin extends JavaPlugin {
         if (jdbcUrl == null || jdbcUrl.isBlank() || username == null || username.isBlank()) {
             throw new IllegalArgumentException("storage.mysql.jdbc-url and username are required");
         }
-        return BloecoRuntime.mysql(jdbcUrl, username, password, poolSize, initialTreasury);
+        return BloecoRuntime.mysql(jdbcUrl, username, password, poolSize,
+                initialTreasury, bankCapital, bankPolicy);
+    }
+
+    private BankingPolicy configuredBankPolicy() {
+        return new BankingPolicy(
+                configuredBasisPoints("bank.deposit-rate-bps", 100),
+                configuredBasisPoints("bank.loan-rate-bps", 500),
+                configuredBasisPoints("bank.reserve-ratio-bps", 2000),
+                configuredPositiveMoney("bank.maximum-loan", "10000.00"),
+                getConfig().getBoolean("bank.lending-enabled", true),
+                Math.max(1, getConfig().getInt("bank.loan-term-days", 7)));
+    }
+
+    private int configuredBasisPoints(String path, int defaultValue) {
+        int value = getConfig().getInt(path, defaultValue);
+        if (value < 0 || value > 10_000) throw new IllegalArgumentException(path + " must be 0..10000");
+        return value;
     }
 
     private String resolveSecret(String valuePath, String envPath) {

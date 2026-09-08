@@ -53,6 +53,11 @@ public record Account(
         return fiscal(AccountId.feeRevenue(), "fee");
     }
 
+    public static Account bankCash() {
+        return new Account(AccountId.bankCash(), AccountClass.INSTITUTION, OwnerType.PLUGIN,
+                "bloeco.bank", "cash", Status.ACTIVE, false, null);
+    }
+
     private static Account fiscal(AccountId id, String purpose) {
         return new Account(id, AccountClass.FISCAL, OwnerType.SYSTEM,
                 "bloeco", purpose, Status.ACTIVE, false, AccountId.treasury());

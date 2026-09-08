@@ -1,5 +1,5 @@
 name: Bloeco
-version: 1.2.1
+version: 1.3.0
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 commands:
@@ -24,4 +24,7 @@ permissions:
     default: op
   bloeco.role.auditor:
     description: Reads balances and central-ledger audit information.
+    default: op
+  bloeco.role.banker:
+    description: Manages state-owned bank policy and lending controls.
     default: op

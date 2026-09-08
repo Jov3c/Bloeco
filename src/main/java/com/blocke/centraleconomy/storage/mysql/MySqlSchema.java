@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates and upgrades the authoritative MySQL/InnoDB ledger schema. */
 final class MySqlSchema {
-    static final int VERSION = 3;
+    static final int VERSION = 4;
 
     private MySqlSchema() {}
 
@@ -233,6 +233,81 @@ final class MySqlSchema {
                         attempts INT NOT NULL DEFAULT 0,
                         created_at DATETIME(3) NOT NULL,
                         INDEX ix_outbox_pending (published_at, created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS banks (
+                        bank_id VARCHAR(128) NOT NULL PRIMARY KEY,
+                        display_name VARCHAR(255) NOT NULL,
+                        cash_account_id VARCHAR(96) NOT NULL,
+                        deposit_rate_bps INT NOT NULL,
+                        loan_rate_bps INT NOT NULL,
+                        reserve_ratio_bps INT NOT NULL,
+                        maximum_loan_minor BIGINT NOT NULL,
+                        lending_enabled BOOLEAN NOT NULL,
+                        loan_term_days INT NOT NULL,
+                        created_at_epoch_ms BIGINT NOT NULL,
+                        updated_at_epoch_ms BIGINT NOT NULL,
+                        CONSTRAINT fk_bank_cash FOREIGN KEY (cash_account_id) REFERENCES accounts(account_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_deposits (
+                        bank_id VARCHAR(128) NOT NULL,
+                        player_uuid CHAR(36) NOT NULL,
+                        principal_minor BIGINT NOT NULL,
+                        accrued_interest_minor BIGINT NOT NULL DEFAULT 0,
+                        last_interest_epoch_ms BIGINT NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        updated_at_epoch_ms BIGINT NOT NULL,
+                        PRIMARY KEY(bank_id, player_uuid),
+                        CONSTRAINT fk_deposit_bank FOREIGN KEY (bank_id) REFERENCES banks(bank_id),
+                        CHECK (principal_minor >= 0), CHECK (accrued_interest_minor >= 0)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_loans (
+                        loan_id CHAR(36) NOT NULL PRIMARY KEY,
+                        bank_id VARCHAR(128) NOT NULL,
+                        borrower_uuid CHAR(36) NOT NULL,
+                        original_principal_minor BIGINT NOT NULL,
+                        outstanding_principal_minor BIGINT NOT NULL,
+                        outstanding_interest_minor BIGINT NOT NULL,
+                        interest_rate_bps INT NOT NULL,
+                        issued_at_epoch_ms BIGINT NOT NULL,
+                        due_at_epoch_ms BIGINT NOT NULL,
+                        status VARCHAR(32) NOT NULL,
+                        disbursement_journal_id CHAR(36) NOT NULL,
+                        updated_at_epoch_ms BIGINT NOT NULL,
+                        INDEX ix_loans_borrower_status (borrower_uuid, status),
+                        CONSTRAINT fk_loan_bank FOREIGN KEY (bank_id) REFERENCES banks(bank_id),
+                        CONSTRAINT fk_loan_journal FOREIGN KEY (disbursement_journal_id) REFERENCES journal_entries(entry_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_loan_payments (
+                        payment_id CHAR(36) NOT NULL PRIMARY KEY,
+                        loan_id CHAR(36) NOT NULL,
+                        principal_minor BIGINT NOT NULL,
+                        interest_minor BIGINT NOT NULL,
+                        journal_id CHAR(36) NOT NULL,
+                        paid_at_epoch_ms BIGINT NOT NULL,
+                        CONSTRAINT fk_payment_loan FOREIGN KEY (loan_id) REFERENCES bank_loans(loan_id),
+                        CONSTRAINT fk_payment_journal FOREIGN KEY (journal_id) REFERENCES journal_entries(entry_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_operations (
+                        operation_id CHAR(36) NOT NULL PRIMARY KEY,
+                        idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+                        operation_type VARCHAR(32) NOT NULL,
+                        player_uuid CHAR(36) NULL,
+                        amount_minor BIGINT NOT NULL,
+                        loan_id CHAR(36) NULL,
+                        journal_id CHAR(36) NOT NULL,
+                        created_at_epoch_ms BIGINT NOT NULL,
+                        CONSTRAINT fk_operation_loan FOREIGN KEY (loan_id) REFERENCES bank_loans(loan_id),
+                        CONSTRAINT fk_operation_journal FOREIGN KEY (journal_id) REFERENCES journal_entries(entry_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                     """);
             statement.executeUpdate("INSERT IGNORE INTO schema_history(version, applied_at) VALUES ("

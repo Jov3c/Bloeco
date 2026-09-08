@@ -11,6 +11,7 @@ public record AccountId(String value) implements Comparable<AccountId> {
     private static final AccountId TREASURY = new AccountId("fiscal:treasury");
     private static final AccountId TAX = new AccountId("fiscal:tax");
     private static final AccountId FEE = new AccountId("fiscal:fee");
+    private static final AccountId BANK_CASH = new AccountId("bank:cash");
 
     public AccountId {
         if (value == null || value.isBlank() || value.length() > 128) {
@@ -24,6 +25,7 @@ public record AccountId(String value) implements Comparable<AccountId> {
     public static AccountId treasury() { return TREASURY; }
     public static AccountId taxRevenue() { return TAX; }
     public static AccountId feeRevenue() { return FEE; }
+    public static AccountId bankCash() { return BANK_CASH; }
 
     public static AccountId player(UUID playerId) {
         return new AccountId("player:" + Objects.requireNonNull(playerId, "playerId") + ":wallet");

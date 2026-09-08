@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates the version 2 central-journal schema on a new SQLite database. */
 final class SqliteSchema {
-    static final int VERSION = 2;
+    static final int VERSION = 3;
 
     private SqliteSchema() {}
 
@@ -144,6 +144,71 @@ final class SqliteSchema {
                         transfer_minor INTEGER NOT NULL,
                         tax_minor INTEGER NOT NULL,
                         fee_minor INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS banks (
+                        bank_id TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        cash_account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                        deposit_rate_bps INTEGER NOT NULL,
+                        loan_rate_bps INTEGER NOT NULL,
+                        reserve_ratio_bps INTEGER NOT NULL,
+                        maximum_loan_minor INTEGER NOT NULL,
+                        lending_enabled INTEGER NOT NULL,
+                        loan_term_days INTEGER NOT NULL,
+                        created_at_epoch_ms INTEGER NOT NULL,
+                        updated_at_epoch_ms INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_deposits (
+                        bank_id TEXT NOT NULL REFERENCES banks(bank_id),
+                        player_uuid TEXT NOT NULL,
+                        principal_minor INTEGER NOT NULL CHECK(principal_minor >= 0),
+                        accrued_interest_minor INTEGER NOT NULL DEFAULT 0,
+                        last_interest_epoch_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        updated_at_epoch_ms INTEGER NOT NULL,
+                        PRIMARY KEY(bank_id, player_uuid)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_loans (
+                        loan_id TEXT PRIMARY KEY,
+                        bank_id TEXT NOT NULL REFERENCES banks(bank_id),
+                        borrower_uuid TEXT NOT NULL,
+                        original_principal_minor INTEGER NOT NULL,
+                        outstanding_principal_minor INTEGER NOT NULL,
+                        outstanding_interest_minor INTEGER NOT NULL,
+                        interest_rate_bps INTEGER NOT NULL,
+                        issued_at_epoch_ms INTEGER NOT NULL,
+                        due_at_epoch_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        disbursement_journal_id TEXT NOT NULL REFERENCES journal_entries(entry_id),
+                        updated_at_epoch_ms INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_loan_payments (
+                        payment_id TEXT PRIMARY KEY,
+                        loan_id TEXT NOT NULL REFERENCES bank_loans(loan_id),
+                        principal_minor INTEGER NOT NULL,
+                        interest_minor INTEGER NOT NULL,
+                        journal_id TEXT NOT NULL REFERENCES journal_entries(entry_id),
+                        paid_at_epoch_ms INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS bank_operations (
+                        operation_id TEXT PRIMARY KEY,
+                        idempotency_key TEXT NOT NULL UNIQUE,
+                        operation_type TEXT NOT NULL,
+                        player_uuid TEXT,
+                        amount_minor INTEGER NOT NULL,
+                        loan_id TEXT,
+                        journal_id TEXT NOT NULL REFERENCES journal_entries(entry_id),
+                        created_at_epoch_ms INTEGER NOT NULL
                     )
                     """);
             statement.executeUpdate("INSERT OR IGNORE INTO schema_history(version, applied_at_epoch_ms) VALUES ("

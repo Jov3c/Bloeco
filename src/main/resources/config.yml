@@ -10,6 +10,16 @@ bootstrap:
   # Paid once per player from Treasury; it is not newly issued currency.
   player-initial-balance: "100.00"
 
+# The state-owned bank uses existing Treasury money as capital. This transfer happens once.
+bank:
+  initial-capital: "250000.00"
+  deposit-rate-bps: 100
+  loan-rate-bps: 500
+  reserve-ratio-bps: 2000
+  maximum-loan: "10000.00"
+  lending-enabled: true
+  loan-term-days: 7
+
 storage:
   # Production authority. Use sqlite only for local development/imports.
   type: mysql
