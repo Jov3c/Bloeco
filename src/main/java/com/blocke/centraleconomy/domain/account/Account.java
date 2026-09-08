@@ -41,7 +41,8 @@ public record Account(
     }
 
     public static Account treasury() {
-        return fiscal(AccountId.treasury(), "treasury");
+        return new Account(AccountId.treasury(), AccountClass.FISCAL, OwnerType.SYSTEM,
+                "bloeco", "treasury", Status.ACTIVE, false, null);
     }
 
     public static Account taxRevenue() {

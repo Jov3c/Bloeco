@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -52,5 +53,7 @@ class JournalEntryTest {
         assertTrue(issuance.permitsNegativeBalance());
         assertFalse(treasury.permitsNegativeBalance());
         assertFalse(player.permitsNegativeBalance());
+        assertNull(treasury.parentId());
+        assertEquals(AccountId.treasury(), Account.taxRevenue().parentId());
     }
 }
