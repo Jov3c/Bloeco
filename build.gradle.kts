@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.blocke"
-version = "1.2.0"
+version = "1.2.1"
 
 repositories {
     mavenCentral()
@@ -41,6 +41,8 @@ tasks.withType<JavaCompile>().configureEach {
 tasks.test {
     useJUnitPlatform()
     systemProperty("bloeco.test.storage", "sqlite")
+    dependsOn(tasks.shadowJar)
+    systemProperty("bloeco.shadow.jar", tasks.shadowJar.get().archiveFile.get().asFile.absolutePath)
 }
 
 tasks.jar {
@@ -51,4 +53,5 @@ tasks.jar {
 tasks.shadowJar {
     archiveBaseName.set("Bloeco")
     archiveClassifier.set("")
+    mergeServiceFiles()
 }

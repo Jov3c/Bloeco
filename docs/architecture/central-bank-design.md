@@ -194,7 +194,7 @@ interface BloecoApi {
 storage:
   type: mysql
   mysql:
-    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4
+    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
     maximum-pool-size: 16

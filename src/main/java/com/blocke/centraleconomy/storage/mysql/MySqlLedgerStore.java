@@ -23,6 +23,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -70,7 +71,7 @@ public final class MySqlLedgerStore implements LedgerStore {
             try (PreparedStatement insert = connection.prepareStatement("""
                     INSERT IGNORE INTO accounts(
                         account_id, account_class, owner_type, owner_id, purpose, status,
-                        permits_negative, parent_account_id, created_at_epoch_ms
+                        permits_negative, parent_account_id, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """)) {
                 insert.setString(1, account.id().value());
@@ -81,7 +82,7 @@ public final class MySqlLedgerStore implements LedgerStore {
                 insert.setString(6, account.status().name());
                 insert.setInt(7, account.permitsNegativeBalance() ? 1 : 0);
                 insert.setString(8, account.parentId() == null ? null : account.parentId().value());
-                insert.setLong(9, System.currentTimeMillis());
+                insert.setTimestamp(9, Timestamp.from(Instant.now()));
                 insert.executeUpdate();
             }
             try (PreparedStatement balance = connection.prepareStatement(

@@ -65,7 +65,7 @@ bootstrap:
 storage:
   type: mysql
   mysql:
-    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4"
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8"
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
 redis:
@@ -89,4 +89,4 @@ SQLite 仍保留为开发、离线测试和迁移模式，必须显式设置 `st
 ./gradlew clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.2.0.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.2.1.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。
