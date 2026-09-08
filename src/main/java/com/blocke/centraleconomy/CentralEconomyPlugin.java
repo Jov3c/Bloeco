@@ -2,7 +2,7 @@ package com.blocke.centraleconomy;
 
 import com.blocke.centraleconomy.paper.BloecoRuntime;
 import com.blocke.centraleconomy.paper.BloecoMenu;
-import com.blocke.centraleconomy.paper.EconomyCommand;
+import com.blocke.centraleconomy.paper.EcoCommand;
 import com.blocke.centraleconomy.paper.PayCommand;
 import com.blocke.centraleconomy.paper.RoleAccess;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -26,8 +26,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 getConfig().getString("storage.sqlite.file", "economy.db")));
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), roles);
-        getCommand("pay").setExecutor(new PayCommand(this, runtime.facade()));
-        getCommand("bloeco").setExecutor(new EconomyCommand(this, runtime.facade(), menu, roles));
+        PayCommand pay = new PayCommand(this, runtime.facade());
+        getCommand("pay").setExecutor(pay);
+        getCommand("pay").setTabCompleter(pay);
+        getCommand("eco").setExecutor(new EcoCommand(menu));
         long minutes = Math.max(1L, getConfig().getLong("integrity.check-interval-minutes", 15L));
         long ticks = Math.multiplyExact(minutes, 1_200L);
         getServer().getScheduler().runTaskTimer(this, () -> runtime.verifyNow().thenAccept(result -> {

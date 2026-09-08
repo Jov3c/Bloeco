@@ -3,13 +3,12 @@ version: 1.0.0
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
 commands:
-  bloeco:
+  eco:
     description: Opens the Bloeco economy centre.
-    aliases: [economy]
-    usage: /bloeco [health|verify|balance|ledger|issue|retire|player|tax]
+    usage: /eco
   pay:
     description: Legacy quick payment command. Bloeco GUI is recommended.
-    usage: /pay <online-player> <amount>
+    usage: /pay <online-player> <positive-integer>
 permissions:
   bloeco.role.operator:
     description: Operates Bloeco health checks and integrity verification.
