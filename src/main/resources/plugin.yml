@@ -2,8 +2,6 @@ name: Bloeco
 version: 1.0.0-SNAPSHOT
 main: com.blocke.centraleconomy.CentralEconomyPlugin
 api-version: '1.21'
-softdepend: [Vault]
-loadbefore: [Bloeco-Stock, BlockStock]
 commands:
   bloeco:
     description: Opens the Bloeco economy centre.

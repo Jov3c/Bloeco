@@ -33,4 +33,15 @@ class PluginBootstrapTest {
         assertFalse(plugin.getDataFolder().toPath().resolve("procurement.yml").toFile().exists());
         assertFalse(plugin.getDataFolder().toPath().resolve("market.yml").toFile().exists());
     }
+
+    @Test
+    void pluginIsStandaloneAndContainsNoCommerceOrVaultMetadata() {
+        var plugin = MockBukkit.load(CentralEconomyPlugin.class);
+
+        assertNotNull(plugin.getCommand("bloeco"));
+        assertNotNull(plugin.getCommand("pay"));
+        assertNull(plugin.getCommand("market"));
+        assertFalse(plugin.getDescription().getSoftDepend().contains("Vault"));
+        assertFalse(plugin.getDescription().getLoadBefore().contains("Bloeco-Stock"));
+    }
 }

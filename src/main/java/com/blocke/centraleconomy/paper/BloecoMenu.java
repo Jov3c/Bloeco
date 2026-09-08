@@ -35,17 +35,15 @@ public final class BloecoMenu implements Listener {
     private final EconomyService economy;
     private final TaxPolicy taxPolicy;
     private final TaxAdministratorAccess taxAccess;
-    private final UUID stockReserve;
     private final BiConsumer<TaxType, Integer> persistTaxRate;
 
     public BloecoMenu(Plugin plugin, EconomyService economy, TaxPolicy taxPolicy,
-                      TaxAdministratorAccess taxAccess, UUID stockReserve,
+                      TaxAdministratorAccess taxAccess,
                       BiConsumer<TaxType, Integer> persistTaxRate) {
         Objects.requireNonNull(plugin, "plugin");
         this.economy = Objects.requireNonNull(economy, "economy");
         this.taxPolicy = Objects.requireNonNull(taxPolicy, "taxPolicy");
         this.taxAccess = Objects.requireNonNull(taxAccess, "taxAccess");
-        this.stockReserve = Objects.requireNonNull(stockReserve, "stockReserve");
         this.persistTaxRate = Objects.requireNonNull(persistTaxRate, "persistTaxRate");
         Bukkit.getPluginManager().registerEvents(this, plugin);
     }
@@ -97,7 +95,6 @@ public final class BloecoMenu implements Listener {
         inventory.setItem(10, item(Material.BOOK, "税率设置", List.of("左键 +1%，右键 -1%", "Shift 点击每次 5%")));
         inventory.setItem(12, item(Material.EMERALD_BLOCK, "发行货币", List.of("左键 100，右键 1,000，Shift 左键 10,000")));
         inventory.setItem(14, item(Material.COAL_BLOCK, "回收货币", List.of("左键 100，右键 1,000，Shift 左键 10,000")));
-        inventory.setItem(16, item(Material.ENDER_CHEST, "证券准备金", List.of("划拨既有国库资金至 Bloeco-Stock", "左键 100，右键 1,000，Shift 左键 10,000")));
         player.openInventory(inventory);
     }
 
@@ -146,7 +143,6 @@ public final class BloecoMenu implements Listener {
                     case 10 -> openTaxes(player);
                     case 12 -> openAdminConfirmation(player, AdministrationAction.ISSUE, amountFor(event.getClick()));
                     case 14 -> openAdminConfirmation(player, AdministrationAction.BURN, amountFor(event.getClick()));
-                    case 16 -> openAdminConfirmation(player, AdministrationAction.FUND_RESERVE, amountFor(event.getClick()));
                     default -> { }
                 }
             } else if (holder instanceof AdminConfirmHolder confirmation && taxAccess.allows(player)) {
@@ -182,8 +178,6 @@ public final class BloecoMenu implements Listener {
         switch (confirmation.action) {
             case ISSUE -> economy.issueToTreasury(confirmation.amount, "GUI currency issue by " + player.getName());
             case BURN -> economy.burnFromTreasury(confirmation.amount, "GUI currency burn by " + player.getName());
-            case FUND_RESERVE -> economy.fundBlockStockReserve(stockReserve, confirmation.amount,
-                    "Bloeco-Stock GUI reserve allocation by " + player.getName());
         }
         player.sendMessage(confirmation.action.displayName + "已执行：" + format(confirmation.amount));
         openAdministration(player);
@@ -237,7 +231,7 @@ public final class BloecoMenu implements Listener {
         private AdminConfirmHolder(BloecoMenu menu, AdministrationAction action, Money amount) { super(menu); this.action = action; this.amount = amount; }
     }
     private enum AdministrationAction {
-        ISSUE("发行货币"), BURN("回收货币"), FUND_RESERVE("划拨证券准备金");
+        ISSUE("发行货币"), BURN("回收货币");
         private final String displayName; AdministrationAction(String displayName) { this.displayName = displayName; }
     }
 }

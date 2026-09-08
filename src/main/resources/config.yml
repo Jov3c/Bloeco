@@ -11,8 +11,11 @@ tax-administrators:
   permission: "bloeco.tax-admin"
   # UUIDs here receive tax administration even without the permission node.
   player-uuids: []
-database-file: economy.db
-bloeco-stock:
-  # Dedicated non-player reserve used only to seed Bloeco-Stock bluechip liquidity.
-  # It must match Bloeco-Stock's market.bluechip-reserve-treasury-uuid setting.
-  bluechip-reserve-treasury-uuid: "00000000-0000-0000-0000-000000000098"
+storage:
+  type: sqlite
+  sqlite:
+    file: economy.db
+
+# Redis is an optional, rebuildable accelerator. It is never the source of truth.
+redis:
+  enabled: false

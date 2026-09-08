@@ -19,7 +19,6 @@ import org.mockbukkit.mockbukkit.entity.PlayerMock;
 
 import java.nio.file.Path;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -60,8 +59,7 @@ class BloecoMenuTest {
 
     private BloecoMenu menu(TaxPolicy policy, TaxAdministratorAccess access, java.util.function.BiConsumer<TaxType, Integer> persistence) {
         Plugin plugin = MockBukkit.createMockPlugin();
-        return new BloecoMenu(plugin, new EconomyService(ledger, policy), policy, access,
-                UUID.fromString("00000000-0000-0000-0000-000000000098"), persistence);
+        return new BloecoMenu(plugin, new EconomyService(ledger, policy), policy, access, persistence);
     }
     private static InventoryClickEvent click(PlayerMock player, int rawSlot) {
         return new InventoryClickEvent(player.getOpenInventory(), InventoryType.SlotType.CONTAINER, rawSlot,

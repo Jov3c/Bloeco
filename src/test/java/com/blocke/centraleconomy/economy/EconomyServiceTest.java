@@ -38,16 +38,6 @@ class EconomyServiceTest {
     }
 
     @Test
-    void reserveFundingMovesExistingTreasuryFundsWithoutIssuingCurrency() {
-        UUID reserve = UUID.fromString("00000000-0000-0000-0000-000000000098");
-        service.issueToTreasury(Money.ofCents(10_000), "approved issue");
-        service.fundBlockStockReserve(reserve, Money.ofCents(10_000), "restricted reserve");
-        assertEquals(0, service.treasuryBalance().cents());
-        assertEquals(10_000, service.playerBalance(reserve).cents());
-        assertEquals(10_000, repository.balance(AccountId.issuance()).cents());
-    }
-
-    @Test
     void paymentCollectsFeeAndIncomeTaxIntoTreasuryAtomically() {
         UUID recipient = UUID.randomUUID();
         repository.credit(AccountId.player(player), Money.ofCents(10_100), TransactionType.ISSUE, "opening balance");
