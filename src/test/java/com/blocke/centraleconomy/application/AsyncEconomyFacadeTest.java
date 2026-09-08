@@ -3,6 +3,8 @@ package com.blocke.centraleconomy.application;
 import com.blocke.centraleconomy.application.result.ErrorCode;
 import com.blocke.centraleconomy.application.result.Result;
 import com.blocke.centraleconomy.domain.account.AccountId;
+import com.blocke.centraleconomy.domain.account.Account;
+import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.storage.sqlite.SqliteLedgerStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,7 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.UUID;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -84,5 +87,33 @@ class AsyncEconomyFacadeTest {
 
         assertEquals(ErrorCode.STORAGE_UNAVAILABLE, result.errorCode());
         assertEquals("经济账本暂时不可用。", result.message());
+    }
+
+    @Test
+    void startupIntegrityFailureEnablesReadOnlyProtectionButKeepsQueriesAvailable() {
+        SqliteLedgerStore delegate = new SqliteLedgerStore(temporaryDirectory.resolve("economy.db"));
+        new CentralBankService(delegate, Clock.systemUTC()).initializeCentralAccounts();
+        UUID existingPlayer = UUID.randomUUID();
+        delegate.createAccount(Account.player(existingPlayer));
+        LedgerStore corrupted = (LedgerStore) Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[]{LedgerStore.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("verifyIntegrity")) {
+                        return new IntegrityReport(false, List.of("balance mismatch fixture"));
+                    }
+                    try {
+                        return method.invoke(delegate, args);
+                    } catch (InvocationTargetException exception) {
+                        throw exception.getCause();
+                    }
+                });
+        facade = new AsyncEconomyFacade(() -> corrupted, Clock.systemUTC());
+
+        assertTrue(facade.readyStage().toCompletableFuture().join().isSuccess());
+        assertTrue(facade.isReadOnly());
+        assertTrue(facade.monetaryTotals().toCompletableFuture().join().isSuccess());
+        assertEquals(0L, facade.playerBalance(existingPlayer).toCompletableFuture().join().value());
+        Result<UUID> write = facade.requestIssuance(
+                Money.ofMinor(100), "admin:requester", "must be rejected").toCompletableFuture().join();
+        assertEquals(ErrorCode.INTEGRITY_FAILURE, write.errorCode());
     }
 }

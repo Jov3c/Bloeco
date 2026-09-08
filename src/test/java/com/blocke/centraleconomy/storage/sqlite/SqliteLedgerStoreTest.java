@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.sql.DriverManager;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -96,6 +97,23 @@ class SqliteLedgerStoreTest {
         assertEquals(10_000L, store.monetaryTotals().issuedMinor());
         assertEquals(0L, store.monetaryTotals().retiredMinor());
         assertEquals(10_000L, store.monetaryTotals().netSupplyMinor());
+    }
+
+    @Test
+    void integrityDetectsAMissingMaterializedBalanceRow() throws Exception {
+        store.commit(issue(10_000, null, null));
+        try (var connection = DriverManager.getConnection(
+                "jdbc:sqlite:" + temporaryDirectory.resolve("economy.db").toAbsolutePath());
+             var statement = connection.prepareStatement(
+                     "DELETE FROM account_balances WHERE account_id = ?")) {
+            statement.setString(1, AccountId.treasury().value());
+            statement.executeUpdate();
+        }
+
+        IntegrityReport report = store.verifyIntegrity();
+
+        assertEquals(false, report.valid());
+        assertTrue(report.violations().stream().anyMatch(value -> value.contains(AccountId.treasury().value())));
     }
 
     private static JournalEntry issue(long amount, String clientId, String key) {

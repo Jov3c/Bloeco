@@ -99,6 +99,7 @@ public final class BloecoMenu implements Listener {
         }
         if (roles.allows(player, RoleAccess.AUDITOR) || roles.allows(player, RoleAccess.OPERATOR)) {
             inventory.setItem(16, item(Material.COMPARATOR, "校验总账", List.of("重算分录与账户余额")));
+            inventory.setItem(18, item(Material.MAP, "经济总览", List.of("货币供给、流通、国库与税费")));
         }
         player.openInventory(inventory);
     }
@@ -133,7 +134,8 @@ public final class BloecoMenu implements Listener {
         if (!(event.getWhoClicked() instanceof Player player) || event.getRawSlot() < 0 || event.getRawSlot() >= SIZE) return;
         int slot = event.getRawSlot();
         if (holder instanceof HubHolder) {
-            if (slot == 14) openRecipients(player);
+            if (slot == 4) openJournal(player);
+            else if (slot == 14) openRecipients(player);
             else if (slot == 16 && roles.anyAdministration(player)) openAdministration(player);
         } else if (holder instanceof RecipientHolder recipients) {
             UUID recipientId = recipients.recipients.get(slot);
@@ -151,6 +153,8 @@ public final class BloecoMenu implements Listener {
                 openConfirmation(player, AdminAction.RETIRE, amountFor(event.getClick()));
             else if (slot == 16 && (roles.allows(player, RoleAccess.AUDITOR)
                     || roles.allows(player, RoleAccess.OPERATOR))) verify(player);
+            else if (slot == 18 && (roles.allows(player, RoleAccess.AUDITOR)
+                    || roles.allows(player, RoleAccess.OPERATOR))) openOverview(player);
         } else if (holder instanceof ConfirmHolder confirmation) {
             if (slot == 11 && roles.allows(player, RoleAccess.MONETARY)) performAdmin(player, confirmation);
             else if (slot == 15) openAdministration(player);
@@ -159,6 +163,61 @@ public final class BloecoMenu implements Listener {
             Integer current = category == null ? null : taxes.rates.get(category);
             if (current != null) changeTax(player, category, current, event.getClick());
         }
+    }
+
+    private void openJournal(Player player) {
+        JournalHolder holder = new JournalHolder(this);
+        Inventory inventory = inventory(holder, "Bloeco 我的账单");
+        inventory.setItem(13, item(Material.CLOCK, "正在读取中央账本…", List.of()));
+        player.openInventory(inventory);
+        economy.recentJournal(com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId()), SIZE)
+                .thenAccept(result -> runMain(() -> {
+                    if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+                    inventory.clear();
+                    if (!result.isSuccess()) {
+                        inventory.setItem(13, item(Material.BARRIER, "读取失败", List.of(MessageFormatter.error(result))));
+                        return;
+                    }
+                    if (result.value().isEmpty()) {
+                        inventory.setItem(13, item(Material.PAPER, "暂无账单", List.of("完成交易后会显示在这里")));
+                        return;
+                    }
+                    int slot = 0;
+                    for (var entry : result.value()) {
+                        String memo = entry.memo().length() > 40 ? entry.memo().substring(0, 40) + "…" : entry.memo();
+                        inventory.setItem(slot++, item(Material.PAPER, entry.type().name(),
+                                List.of(entry.createdAt().toString(), memo, "凭证：" + entry.id())));
+                    }
+                }));
+    }
+
+    private void openOverview(Player player) {
+        OverviewHolder holder = new OverviewHolder(this);
+        Inventory inventory = inventory(holder, "Bloeco 经济总览");
+        inventory.setItem(13, item(Material.CLOCK, "正在汇总中央账本…", List.of()));
+        player.openInventory(inventory);
+        economy.snapshot().thenAccept(result -> runMain(() -> {
+            if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+            inventory.clear();
+            if (!result.isSuccess()) {
+                inventory.setItem(13, item(Material.BARRIER, "汇总失败", List.of(MessageFormatter.error(result))));
+                return;
+            }
+            var snapshot = result.value();
+            inventory.setItem(10, item(Material.EMERALD_BLOCK, "货币供给", List.of(
+                    "累计发行：" + MessageFormatter.moneyMinor(snapshot.monetaryTotals().issuedMinor()),
+                    "累计回收：" + MessageFormatter.moneyMinor(snapshot.monetaryTotals().retiredMinor()),
+                    "净供给：" + MessageFormatter.moneyMinor(snapshot.monetaryTotals().netSupplyMinor()))));
+            inventory.setItem(12, item(Material.PLAYER_HEAD, "玩家流通量",
+                    List.of(MessageFormatter.moneyMinor(snapshot.playerCirculationMinor()))));
+            inventory.setItem(14, item(Material.CHEST, "国库",
+                    List.of(MessageFormatter.moneyMinor(snapshot.treasuryMinor()))));
+            inventory.setItem(16, item(Material.PAPER, "财政收入", List.of(
+                    "税收：" + MessageFormatter.moneyMinor(snapshot.taxRevenueMinor()),
+                    "手续费：" + MessageFormatter.moneyMinor(snapshot.feeRevenueMinor()))));
+            inventory.setItem(22, item(economy.isReadOnly() ? Material.REDSTONE_BLOCK : Material.LIME_WOOL,
+                    economy.isReadOnly() ? "只读保护中" : "账本可写", List.of("完整性状态")));
+        }));
     }
 
     @EventHandler
@@ -272,6 +331,8 @@ public final class BloecoMenu implements Listener {
     }
     private static final class HubHolder extends Holder { private HubHolder(BloecoMenu menu) { super(menu); } }
     private static final class AdminHolder extends Holder { private AdminHolder(BloecoMenu menu) { super(menu); } }
+    private static final class JournalHolder extends Holder { private JournalHolder(BloecoMenu menu) { super(menu); } }
+    private static final class OverviewHolder extends Holder { private OverviewHolder(BloecoMenu menu) { super(menu); } }
     private static final class RecipientHolder extends Holder {
         private final Map<Integer, UUID> recipients = new LinkedHashMap<>();
         private RecipientHolder(BloecoMenu menu) { super(menu); }

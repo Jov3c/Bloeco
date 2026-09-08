@@ -1,1 +1,1 @@
-rootProject.name = "CentralEconomy"
+rootProject.name = "Bloeco"

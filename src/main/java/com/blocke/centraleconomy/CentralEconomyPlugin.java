@@ -28,6 +28,13 @@ public class CentralEconomyPlugin extends JavaPlugin {
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), roles);
         getCommand("pay").setExecutor(new PayCommand(this, runtime.facade()));
         getCommand("bloeco").setExecutor(new EconomyCommand(this, runtime.facade(), menu, roles));
+        long minutes = Math.max(1L, getConfig().getLong("integrity.check-interval-minutes", 15L));
+        long ticks = Math.multiplyExact(minutes, 1_200L);
+        getServer().getScheduler().runTaskTimer(this, () -> runtime.verifyNow().thenAccept(result -> {
+            if (!result.isSuccess() || !result.value().valid()) {
+                getLogger().severe("Central ledger integrity check failed; Bloeco is now read-only.");
+            }
+        }), ticks, ticks);
     }
 
     @Override

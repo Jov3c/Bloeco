@@ -7,6 +7,7 @@ import com.blocke.centraleconomy.application.MonetaryTotals;
 import com.blocke.centraleconomy.application.PlayerSettlement;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
+import com.blocke.centraleconomy.domain.account.AccountClass;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
 import com.blocke.centraleconomy.domain.ledger.JournalType;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
@@ -515,6 +516,83 @@ public final class SqliteLedgerStore implements LedgerStore {
     }
 
     @Override
+    public synchronized Map<AccountClass, Long> accountClassTotals() {
+        requireOpen();
+        Map<AccountClass, Long> totals = new java.util.EnumMap<>(AccountClass.class);
+        for (AccountClass accountClass : AccountClass.values()) totals.put(accountClass, 0L);
+        try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+                SELECT a.account_class, COALESCE(SUM(b.balance_minor), 0)
+                FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
+                GROUP BY a.account_class
+                """)) {
+            while (result.next()) totals.put(AccountClass.valueOf(result.getString(1)), result.getLong(2));
+            return Map.copyOf(totals);
+        } catch (SQLException exception) {
+            throw storageFailure("unable to total account classes", exception);
+        }
+    }
+
+    @Override
+    public synchronized long playerCirculation() {
+        return scalarLong("""
+                SELECT COALESCE(SUM(b.balance_minor), 0)
+                FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
+                WHERE a.owner_type = 'PLAYER'
+                """);
+    }
+
+    @Override
+    public synchronized Map<JournalType, Long> journalVolumeSince(Instant since) {
+        requireOpen();
+        Objects.requireNonNull(since, "since");
+        Map<JournalType, Long> totals = new java.util.EnumMap<>(JournalType.class);
+        for (JournalType type : JournalType.values()) totals.put(type, 0L);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT j.journal_type,
+                       COALESCE(SUM(CASE WHEN p.amount_minor > 0 THEN p.amount_minor ELSE 0 END), 0)
+                FROM journal_entries j JOIN postings p ON p.entry_id = j.entry_id
+                WHERE j.created_at_epoch_ms >= ? GROUP BY j.journal_type
+                """)) {
+            statement.setLong(1, since.toEpochMilli());
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) totals.put(JournalType.valueOf(result.getString(1)), result.getLong(2));
+            }
+            return Map.copyOf(totals);
+        } catch (SQLException exception) {
+            throw storageFailure("unable to total journal volume", exception);
+        }
+    }
+
+    @Override
+    public synchronized List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
+        requireOpen();
+        Objects.requireNonNull(accountId, "accountId");
+        if (limit < 1 || limit > 100) throw new IllegalArgumentException("journal limit must be between 1 and 100");
+        String sql = accountId.isPresent() ? """
+                SELECT DISTINCT j.entry_id, j.created_at_epoch_ms, j.rowid AS journal_rowid
+                FROM journal_entries j JOIN postings p ON p.entry_id = j.entry_id
+                WHERE p.account_id = ? ORDER BY j.created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                """ : """
+                SELECT entry_id, created_at_epoch_ms, rowid AS journal_rowid FROM journal_entries
+                ORDER BY created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                """;
+        List<UUID> ids = new ArrayList<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            if (accountId.isPresent()) statement.setString(index++, accountId.orElseThrow().value());
+            statement.setInt(index, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                while (result.next()) ids.add(UUID.fromString(result.getString("entry_id")));
+            }
+            List<JournalEntry> entries = new ArrayList<>(ids.size());
+            for (UUID id : ids) entries.add(entry(id).orElseThrow());
+            return List.copyOf(entries);
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read recent journals", exception);
+        }
+    }
+
+    @Override
     public synchronized IntegrityReport verifyIntegrity() {
         requireOpen();
         List<String> violations = new ArrayList<>();
@@ -541,6 +619,11 @@ public final class SqliteLedgerStore implements LedgerStore {
             for (Map.Entry<String, Long> balance : materialized.entrySet()) {
                 if (!Objects.equals(balance.getValue(), rebuilt.getOrDefault(balance.getKey(), 0L))) {
                     violations.add("balance mismatch " + balance.getKey());
+                }
+            }
+            for (String accountId : rebuilt.keySet()) {
+                if (!materialized.containsKey(accountId)) {
+                    violations.add("missing materialized balance " + accountId);
                 }
             }
             return violations.isEmpty() ? IntegrityReport.validReport() : new IntegrityReport(false, violations);
@@ -821,6 +904,15 @@ public final class SqliteLedgerStore implements LedgerStore {
         requireOpen();
         try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
             return result.next() ? result.getInt(1) : 0;
+        } catch (SQLException exception) {
+            throw storageFailure("unable to query SQLite ledger", exception);
+        }
+    }
+
+    private long scalarLong(String sql) {
+        requireOpen();
+        try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
+            return result.next() ? result.getLong(1) : 0L;
         } catch (SQLException exception) {
             throw storageFailure("unable to query SQLite ledger", exception);
         }

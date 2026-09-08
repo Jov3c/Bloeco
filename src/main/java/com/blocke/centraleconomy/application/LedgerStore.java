@@ -2,13 +2,17 @@ package com.blocke.centraleconomy.application;
 
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
+import com.blocke.centraleconomy.domain.account.AccountClass;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
+import com.blocke.centraleconomy.domain.ledger.JournalType;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
 import com.blocke.centraleconomy.domain.tax.TaxRule;
 
 import java.util.Optional;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
+import java.util.Map;
 
 /** Transaction-oriented persistence port implemented by each authoritative SQL backend. */
 public interface LedgerStore extends AutoCloseable {
@@ -35,6 +39,10 @@ public interface LedgerStore extends AutoCloseable {
     int entryCount();
     int entriesForKey(String clientId, String idempotencyKey);
     MonetaryTotals monetaryTotals();
+    Map<AccountClass, Long> accountClassTotals();
+    long playerCirculation();
+    Map<JournalType, Long> journalVolumeSince(Instant since);
+    List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit);
     IntegrityReport verifyIntegrity();
     @Override void close();
 }

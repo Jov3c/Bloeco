@@ -6,6 +6,7 @@ import com.blocke.centraleconomy.application.result.Result;
 import com.blocke.centraleconomy.application.result.TransferReceipt;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
+import com.blocke.centraleconomy.domain.ledger.JournalEntry;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
@@ -17,6 +18,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutorService;
@@ -34,6 +36,7 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     private final AtomicReference<Thread> worker = new AtomicReference<>();
     private final CompletableFuture<Result<Void>> ready = new CompletableFuture<>();
     private volatile Services services;
+    private volatile boolean readOnly;
 
     public AsyncEconomyFacade(Supplier<? extends LedgerStore> storeFactory, Clock clock) {
         Objects.requireNonNull(storeFactory, "storeFactory");
@@ -66,41 +69,48 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     public CompletionStage<Result<Long>> playerBalance(UUID playerId) {
         return submit(context -> {
             Account account = Account.player(playerId);
-            context.store.createAccount(account);
-            return context.store.balance(account.id());
+            try {
+                return context.store.balance(account.id());
+            } catch (LedgerException exception) {
+                if (exception.code() != LedgerException.Code.ACCOUNT_NOT_FOUND) throw exception;
+                if (readOnly) throw new LedgerException(LedgerException.Code.INTEGRITY_FAILURE,
+                        "中央总账校验失败，Bloeco 已进入只读保护模式。");
+                context.store.createAccount(account);
+                return context.store.balance(account.id());
+            }
         });
     }
 
     public CompletionStage<Result<TransferReceipt>> pay(PlayerPayment payment) {
-        return submit(context -> context.payments.pay(payment));
+        return submitWrite(context -> context.payments.pay(payment));
     }
 
     public CompletionStage<Result<UUID>> requestIssuance(Money amount, String actorId, String reason) {
-        return submit(context -> context.bank.requestIssuance(amount, actorId, reason));
+        return submitWrite(context -> context.bank.requestIssuance(amount, actorId, reason));
     }
 
     public CompletionStage<Result<IssuanceRecord>> approveIssuance(UUID requestId, String actorId) {
-        return submit(context -> context.bank.approveIssuance(requestId, actorId));
+        return submitWrite(context -> context.bank.approveIssuance(requestId, actorId));
     }
 
     public CompletionStage<Result<JournalReceipt>> executeIssuance(
             UUID requestId, String actorId, String idempotencyKey) {
-        return submit(context -> context.bank.executeIssuance(requestId, actorId, idempotencyKey));
+        return submitWrite(context -> context.bank.executeIssuance(requestId, actorId, idempotencyKey));
     }
 
     public CompletionStage<Result<JournalReceipt>> retire(
             Money amount, String actorId, String memo, String idempotencyKey) {
-        return submit(context -> context.bank.retireFromTreasury(amount, actorId, memo, idempotencyKey));
+        return submitWrite(context -> context.bank.retireFromTreasury(amount, actorId, memo, idempotencyKey));
     }
 
     public CompletionStage<Result<JournalReceipt>> adjustPlayerBalance(
             UUID playerId, Money target, String actorId, String memo, String idempotencyKey) {
-        return submit(context -> context.bank.adjustPlayerBalance(playerId, target, actorId, memo, idempotencyKey));
+        return submitWrite(context -> context.bank.adjustPlayerBalance(playerId, target, actorId, memo, idempotencyKey));
     }
 
     public CompletionStage<Result<TaxRule>> changeTaxRule(
             TaxCategory category, int basisPoints, long fixedMinor, String actorId, String memo) {
-        return submit(context -> context.taxes.change(category, basisPoints, fixedMinor, actorId, memo));
+        return submitWrite(context -> context.taxes.change(category, basisPoints, fixedMinor, actorId, memo));
     }
 
     public CompletionStage<Result<TaxRule>> currentTaxRule(TaxCategory category) {
@@ -108,21 +118,44 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     }
 
     public CompletionStage<Result<MonetaryTotals>> monetaryTotals() {
-        return submit(context -> context.store.monetaryTotals());
+        return submit(context -> context.queries.snapshot().monetaryTotals());
     }
 
     public CompletionStage<Result<IntegrityReport>> verifyIntegrity() {
-        return submit(context -> context.store.verifyIntegrity());
+        return submit(context -> {
+            IntegrityReport report = context.queries.verifyIntegrity();
+            if (!report.valid()) readOnly = true;
+            return report;
+        });
+    }
+
+    public CompletionStage<Result<EconomicSnapshot>> snapshot() {
+        return submit(context -> context.queries.snapshot());
+    }
+
+    public CompletionStage<Result<List<JournalEntry>>> recentJournal(
+            AccountId accountId, int limit) {
+        return submit(context -> context.queries.recentJournal(accountId, limit));
+    }
+
+    public boolean isReadOnly() {
+        return readOnly;
     }
 
     private void initialize(Supplier<? extends LedgerStore> storeFactory, Clock clock) {
         try {
             LedgerStore store = storeFactory.get();
+            IntegrityReport integrity = store.verifyIntegrity();
             CentralBankService bank = new CentralBankService(store, clock);
-            bank.initializeCentralAccounts();
             TaxRuleService taxes = new TaxRuleService(store, clock);
-            taxes.initializeDefaults();
-            services = new Services(store, bank, taxes, new PlayerPaymentService(store, taxes, clock));
+            EconomyQueries queries = new EconomyQueries(store, clock);
+            if (integrity.valid()) {
+                bank.initializeCentralAccounts();
+                taxes.initializeDefaults();
+                integrity = queries.verifyIntegrity();
+            }
+            services = new Services(store, bank, taxes, new PlayerPaymentService(store, taxes, clock), queries);
+            readOnly = !integrity.valid();
             ready.complete(Result.success(null));
         } catch (RuntimeException exception) {
             ready.complete(Result.failure(ErrorCode.STORAGE_UNAVAILABLE, "经济账本暂时不可用。"));
@@ -150,6 +183,15 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             }
         });
         return result;
+    }
+
+    private <T> CompletionStage<Result<T>> submitWrite(Function<Services, T> operation) {
+        if (readOnly) return CompletableFuture.completedFuture(readOnlyFailure());
+        return submit(context -> {
+            if (readOnly) throw new LedgerException(LedgerException.Code.INTEGRITY_FAILURE,
+                    "中央总账校验失败，Bloeco 已进入只读保护模式。");
+            return operation.apply(context);
+        });
     }
 
     @Override
@@ -189,6 +231,10 @@ public final class AsyncEconomyFacade implements AutoCloseable {
         return Result.failure(ErrorCode.STORAGE_UNAVAILABLE, "经济账本暂时不可用。");
     }
 
+    private static <T> Result<T> readOnlyFailure() {
+        return Result.failure(ErrorCode.INTEGRITY_FAILURE, "中央总账校验失败，Bloeco 已进入只读保护模式。");
+    }
+
     private static ErrorCode map(LedgerException.Code code) {
         return switch (code) {
             case INVALID_AMOUNT -> ErrorCode.INVALID_AMOUNT;
@@ -207,5 +253,6 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             LedgerStore store,
             CentralBankService bank,
             TaxRuleService taxes,
-            PlayerPaymentService payments) {}
+            PlayerPaymentService payments,
+            EconomyQueries queries) {}
 }

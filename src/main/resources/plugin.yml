@@ -6,7 +6,7 @@ commands:
   bloeco:
     description: Opens the Bloeco economy centre.
     aliases: [economy]
-    usage: /bloeco [health|verify|balance|issue|retire|player|tax]
+    usage: /bloeco [health|verify|balance|ledger|issue|retire|player|tax]
   pay:
     description: Legacy quick payment command. Bloeco GUI is recommended.
     usage: /pay <online-player> <amount>

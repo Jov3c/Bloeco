@@ -42,6 +42,7 @@ public final class EconomyCommand implements CommandExecutor {
                 case "health" -> health(sender);
                 case "verify" -> verify(sender);
                 case "balance" -> balance(sender, args);
+                case "ledger" -> ledger(sender, args);
                 case "issue" -> issue(sender, args);
                 case "retire" -> retire(sender, args);
                 case "player" -> player(sender, args);
@@ -74,6 +75,19 @@ public final class EconomyCommand implements CommandExecutor {
         Player player = requireOnline(args[1]);
         economy.playerBalance(player.getUniqueId()).thenAccept(result -> dispatch(sender, result,
                 value -> player.getName() + " 的余额为 " + MessageFormatter.moneyMinor(value) + "。"));
+    }
+
+    private void ledger(CommandSender sender, String[] args) {
+        require(sender, RoleAccess.AUDITOR);
+        if (args.length != 2) throw new IllegalArgumentException("用法：/bloeco ledger <在线玩家>");
+        Player player = requireOnline(args[1]);
+        economy.recentJournal(com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId()), 10)
+                .thenAccept(result -> dispatch(sender, result, entries -> {
+                    if (entries.isEmpty()) return player.getName() + " 暂无账单。";
+                    return player.getName() + " 最近账单：" + entries.stream()
+                            .map(entry -> entry.type() + " " + entry.id())
+                            .collect(java.util.stream.Collectors.joining("；"));
+                }));
     }
 
     private void issue(CommandSender sender, String[] args) {
@@ -175,6 +189,6 @@ public final class EconomyCommand implements CommandExecutor {
     }
 
     private static void usage(CommandSender sender) {
-        sender.sendMessage("Bloeco：/bloeco health|verify|balance|issue|retire|player|tax");
+        sender.sendMessage("Bloeco：/bloeco health|verify|balance|ledger|issue|retire|player|tax");
     }
 }

@@ -11,3 +11,6 @@ storage:
 # Redis is an optional, rebuildable accelerator. It is never the source of truth.
 redis:
   enabled: false
+
+integrity:
+  check-interval-minutes: 15
