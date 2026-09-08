@@ -10,6 +10,9 @@ import com.blocke.centraleconomy.domain.ledger.JournalEntry;
 import com.blocke.centraleconomy.domain.ledger.JournalType;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.ledger.Posting;
+import com.blocke.centraleconomy.domain.money.Money;
+import com.blocke.centraleconomy.domain.tax.TaxCategory;
+import com.blocke.centraleconomy.domain.tax.TaxRule;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -288,6 +291,84 @@ public final class SqliteLedgerStore implements LedgerStore {
     }
 
     @Override
+    public synchronized TaxRule changeTaxRule(TaxRule rule) {
+        requireOpen();
+        Objects.requireNonNull(rule, "rule");
+        try {
+            beginImmediate();
+            try (PreparedStatement close = connection.prepareStatement("""
+                    UPDATE tax_rules SET effective_until_epoch_ms = ?
+                    WHERE category = ? AND effective_until_epoch_ms IS NULL
+                    """)) {
+                close.setLong(1, rule.effectiveFrom().toEpochMilli());
+                close.setString(2, rule.category().name());
+                close.executeUpdate();
+            }
+            try (PreparedStatement insert = connection.prepareStatement("""
+                    INSERT INTO tax_rules(version_id, category, basis_points, fixed_minor,
+                        destination_account_id, effective_from_epoch_ms, effective_until_epoch_ms,
+                        actor_id, memo) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                    """)) {
+                insert.setString(1, rule.versionId().toString());
+                insert.setString(2, rule.category().name());
+                insert.setInt(3, rule.basisPoints());
+                insert.setLong(4, rule.fixedFee().minor());
+                insert.setString(5, rule.destinationAccountId().value());
+                insert.setLong(6, rule.effectiveFrom().toEpochMilli());
+                insert.setString(7, rule.actorId());
+                insert.setString(8, rule.memo());
+                insert.executeUpdate();
+            }
+            insertAudit(rule.actorId(), "TAX_RULE_CHANGED", rule.memo(), null, rule.effectiveFrom());
+            commitTransaction();
+            return rule;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to change tax rule", exception);
+        }
+    }
+
+    @Override
+    public synchronized Optional<TaxRule> currentTaxRule(TaxCategory category, Instant at) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT * FROM tax_rules
+                WHERE category = ? AND effective_from_epoch_ms <= ?
+                    AND (effective_until_epoch_ms IS NULL OR effective_until_epoch_ms > ?)
+                ORDER BY effective_from_epoch_ms DESC, rowid DESC LIMIT 1
+                """)) {
+            statement.setString(1, category.name());
+            statement.setLong(2, at.toEpochMilli());
+            statement.setLong(3, at.toEpochMilli());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(readTaxRule(result)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read current tax rule", exception);
+        }
+    }
+
+    @Override
+    public synchronized Optional<TaxRule> taxRule(UUID versionId) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM tax_rules WHERE version_id = ?")) {
+            statement.setString(1, versionId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(readTaxRule(result)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read tax rule version", exception);
+        }
+    }
+
+    @Override
+    public synchronized int taxRuleCount() {
+        return scalarInt("SELECT COUNT(*) FROM tax_rules");
+    }
+
+    @Override
     public synchronized long balance(AccountId accountId) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
@@ -481,6 +562,18 @@ public final class SqliteLedgerStore implements LedgerStore {
                 Instant.ofEpochMilli(result.getLong("requested_at_epoch_ms")),
                 approver == null ? null : Instant.ofEpochMilli(approvedAt),
                 executed == null ? null : UUID.fromString(executed));
+    }
+
+    private TaxRule readTaxRule(ResultSet result) throws SQLException {
+        long until = result.getLong("effective_until_epoch_ms");
+        boolean hasUntil = !result.wasNull();
+        return new TaxRule(UUID.fromString(result.getString("version_id")),
+                TaxCategory.valueOf(result.getString("category")), result.getInt("basis_points"),
+                Money.ofMinor(result.getLong("fixed_minor")),
+                new AccountId(result.getString("destination_account_id")),
+                Instant.ofEpochMilli(result.getLong("effective_from_epoch_ms")),
+                hasUntil ? Instant.ofEpochMilli(until) : null,
+                result.getString("actor_id"), result.getString("memo"));
     }
 
     private long flowSince(JournalType type, AccountId positiveAccount, Instant since) {

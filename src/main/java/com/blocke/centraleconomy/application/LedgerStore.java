@@ -3,6 +3,8 @@ package com.blocke.centraleconomy.application;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
+import com.blocke.centraleconomy.domain.tax.TaxCategory;
+import com.blocke.centraleconomy.domain.tax.TaxRule;
 
 import java.util.Optional;
 import java.time.Instant;
@@ -20,6 +22,10 @@ public interface LedgerStore extends AutoCloseable {
     long policyLimit(String key, long defaultValue);
     long issuedSince(Instant since);
     long retiredSince(Instant since);
+    TaxRule changeTaxRule(TaxRule rule);
+    Optional<TaxRule> currentTaxRule(TaxCategory category, Instant at);
+    Optional<TaxRule> taxRule(UUID versionId);
+    int taxRuleCount();
     long balance(AccountId accountId);
     Optional<JournalEntry> entry(UUID entryId);
     Optional<JournalEntry> idempotentResult(String clientId, String idempotencyKey);
