@@ -1,6 +1,7 @@
 package com.blocke.centraleconomy.storage.sqlite;
 
 import com.blocke.centraleconomy.application.IntegrityReport;
+import com.blocke.centraleconomy.application.IssuanceRecord;
 import com.blocke.centraleconomy.application.LedgerStore;
 import com.blocke.centraleconomy.application.MonetaryTotals;
 import com.blocke.centraleconomy.domain.account.Account;
@@ -103,38 +104,7 @@ public final class SqliteLedgerStore implements LedgerStore {
 
         try {
             beginImmediate();
-            Map<AccountId, Long> deltas = aggregate(entry.postings());
-            Map<AccountId, StoredAccount> accounts = loadAccounts(deltas.keySet().stream().sorted().toList());
-            Map<AccountId, Long> updatedBalances = new LinkedHashMap<>();
-            for (Map.Entry<AccountId, Long> delta : deltas.entrySet()) {
-                StoredAccount account = accounts.get(delta.getKey());
-                if (account == null) {
-                    throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND,
-                            "account does not exist: " + delta.getKey().value());
-                }
-                if (!"ACTIVE".equals(account.status)) {
-                    throw new LedgerException(LedgerException.Code.ACCOUNT_FROZEN,
-                            "account is not active: " + delta.getKey().value());
-                }
-                long updated;
-                try {
-                    updated = Math.addExact(account.balance, delta.getValue());
-                } catch (ArithmeticException exception) {
-                    throw new LedgerException(LedgerException.Code.INVALID_AMOUNT,
-                            "account balance exceeds the supported range", exception);
-                }
-                if (!account.permitsNegative && updated < 0) {
-                    throw new LedgerException(LedgerException.Code.INSUFFICIENT_FUNDS,
-                            "account has insufficient funds: " + delta.getKey().value());
-                }
-                updatedBalances.put(delta.getKey(), updated);
-            }
-
-            insertJournal(entry);
-            updateBalances(updatedBalances);
-            if (entry.clientId() != null) {
-                insertIdempotency(entry);
-            }
+            applyEntry(entry);
             commitTransaction();
             return entry;
         } catch (SQLException | RuntimeException exception) {
@@ -142,6 +112,179 @@ public final class SqliteLedgerStore implements LedgerStore {
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to commit journal", exception);
         }
+    }
+
+    @Override
+    public synchronized void createIssuanceRequest(IssuanceRecord request) {
+        requireOpen();
+        Objects.requireNonNull(request, "request");
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO issuance_requests(request_id, amount_minor, status, reason, requester_id,
+                    approver_id, requested_at_epoch_ms, approved_at_epoch_ms, executed_entry_id)
+                VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
+                """)) {
+            statement.setString(1, request.requestId().toString());
+            statement.setLong(2, request.amount().minor());
+            statement.setString(3, request.status().name());
+            statement.setString(4, request.reason());
+            statement.setString(5, request.requesterId());
+            statement.setLong(6, request.requestedAt().toEpochMilli());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw storageFailure("unable to create issuance request", exception);
+        }
+    }
+
+    @Override
+    public synchronized IssuanceRecord issuanceRequest(UUID requestId) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM issuance_requests WHERE request_id = ?")) {
+            statement.setString(1, requestId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance request does not exist");
+                return readIssuance(result);
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read issuance request", exception);
+        }
+    }
+
+    @Override
+    public synchronized IssuanceRecord approveIssuance(UUID requestId, String approverId, Instant approvedAt) {
+        requireOpen();
+        try {
+            beginImmediate();
+            IssuanceRecord request = issuanceRequest(requestId);
+            if (request.status() != IssuanceRecord.Status.REQUESTED) {
+                throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance request is not awaiting approval");
+            }
+            if (request.requesterId().equals(approverId)) {
+                throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance requester cannot approve the same request");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE issuance_requests SET status = 'APPROVED', approver_id = ?, approved_at_epoch_ms = ?
+                    WHERE request_id = ? AND status = 'REQUESTED'
+                    """)) {
+                statement.setString(1, approverId);
+                statement.setLong(2, approvedAt.toEpochMilli());
+                statement.setString(3, requestId.toString());
+                if (statement.executeUpdate() != 1) {
+                    throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                            "issuance request changed during approval");
+                }
+            }
+            commitTransaction();
+            return issuanceRequest(requestId);
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to approve issuance request", exception);
+        }
+    }
+
+    @Override
+    public synchronized JournalEntry commitApprovedIssuance(UUID requestId, JournalEntry entry) {
+        requireOpen();
+        if (entry.type() != JournalType.ISSUE || entry.postings().size() != 2
+                || !entry.postings().contains(new Posting(AccountId.issuanceControl(),
+                -entry.postings().stream().filter(p -> p.accountId().equals(AccountId.treasury()))
+                        .mapToLong(Posting::amountMinor).findFirst().orElse(0)))) {
+            throw new LedgerException(LedgerException.Code.INVALID_JOURNAL,
+                    "issuance must debit issuance control and credit Treasury");
+        }
+        if (entry.clientId() != null) {
+            Optional<JournalEntry> replay = idempotentResult(entry.clientId(), entry.idempotencyKey());
+            if (replay.isPresent()) {
+                if (!sameRequest(replay.get(), entry)) throw new LedgerException(
+                        LedgerException.Code.IDEMPOTENCY_CONFLICT, "idempotency key conflicts with existing issuance");
+                return replay.get();
+            }
+        }
+        try {
+            beginImmediate();
+            IssuanceRecord request = issuanceRequest(requestId);
+            if (request.status() != IssuanceRecord.Status.APPROVED) {
+                throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance request is not approved");
+            }
+            long treasuryCredit = entry.postings().stream()
+                    .filter(p -> p.accountId().equals(AccountId.treasury()))
+                    .mapToLong(Posting::amountMinor).findFirst().orElseThrow();
+            if (treasuryCredit != request.amount().minor()) {
+                throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                        "issuance journal amount differs from approved request");
+            }
+            applyEntry(entry);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE issuance_requests SET status = 'EXECUTED', executed_entry_id = ?
+                    WHERE request_id = ? AND status = 'APPROVED'
+                    """)) {
+                statement.setString(1, entry.id().toString());
+                statement.setString(2, requestId.toString());
+                if (statement.executeUpdate() != 1) throw new LedgerException(
+                        LedgerException.Code.POLICY_REJECTED, "issuance request changed during execution");
+            }
+            commitTransaction();
+            return entry;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to execute issuance request", exception);
+        }
+    }
+
+    @Override
+    public synchronized void setPolicyLimit(String key, long value, String actorId, String memo, Instant changedAt) {
+        requireOpen();
+        try {
+            beginImmediate();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO policy_limits(policy_key, value_minor, actor_id, memo, updated_at_epoch_ms)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(policy_key) DO UPDATE SET value_minor=excluded.value_minor,
+                        actor_id=excluded.actor_id, memo=excluded.memo, updated_at_epoch_ms=excluded.updated_at_epoch_ms
+                    """)) {
+                statement.setString(1, key);
+                statement.setLong(2, value);
+                statement.setString(3, actorId);
+                statement.setString(4, memo);
+                statement.setLong(5, changedAt.toEpochMilli());
+                statement.executeUpdate();
+            }
+            insertAudit(actorId, "POLICY_LIMIT_CHANGED", memo, null, changedAt);
+            commitTransaction();
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            throw storageFailure("unable to update policy limit", exception);
+        }
+    }
+
+    @Override
+    public synchronized long policyLimit(String key, long defaultValue) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT value_minor FROM policy_limits WHERE policy_key = ?")) {
+            statement.setString(1, key);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getLong(1) : defaultValue;
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read policy limit", exception);
+        }
+    }
+
+    @Override
+    public synchronized long issuedSince(Instant since) {
+        return flowSince(JournalType.ISSUE, AccountId.treasury(), since);
+    }
+
+    @Override
+    public synchronized long retiredSince(Instant since) {
+        return flowSince(JournalType.RETIRE, AccountId.retiredControl(), since);
     }
 
     @Override
@@ -195,6 +338,21 @@ public final class SqliteLedgerStore implements LedgerStore {
             }
         } catch (SQLException exception) {
             throw storageFailure("unable to read idempotency record", exception);
+        }
+    }
+
+    @Override
+    public synchronized boolean hasReversal(UUID originalEntryId) {
+        requireOpen();
+        Objects.requireNonNull(originalEntryId, "originalEntryId");
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT 1 FROM journal_entries WHERE reversal_of_entry_id = ? LIMIT 1")) {
+            statement.setString(1, originalEntryId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next();
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to query journal reversal", exception);
         }
     }
 
@@ -277,6 +435,86 @@ public final class SqliteLedgerStore implements LedgerStore {
             statement.execute("PRAGMA foreign_keys=ON");
             statement.execute("PRAGMA busy_timeout=5000");
             statement.execute("PRAGMA synchronous=FULL");
+        }
+    }
+
+    private void applyEntry(JournalEntry entry) throws SQLException {
+        Map<AccountId, Long> deltas = aggregate(entry.postings());
+        Map<AccountId, StoredAccount> accounts = loadAccounts(deltas.keySet().stream().sorted().toList());
+        Map<AccountId, Long> updatedBalances = new LinkedHashMap<>();
+        for (Map.Entry<AccountId, Long> delta : deltas.entrySet()) {
+            StoredAccount account = accounts.get(delta.getKey());
+            if (account == null) {
+                throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND,
+                        "account does not exist: " + delta.getKey().value());
+            }
+            if (!"ACTIVE".equals(account.status)) {
+                throw new LedgerException(LedgerException.Code.ACCOUNT_FROZEN,
+                        "account is not active: " + delta.getKey().value());
+            }
+            long updated;
+            try {
+                updated = Math.addExact(account.balance, delta.getValue());
+            } catch (ArithmeticException exception) {
+                throw new LedgerException(LedgerException.Code.INVALID_AMOUNT,
+                        "account balance exceeds the supported range", exception);
+            }
+            if (!account.permitsNegative && updated < 0) {
+                throw new LedgerException(LedgerException.Code.INSUFFICIENT_FUNDS,
+                        "account has insufficient funds: " + delta.getKey().value());
+            }
+            updatedBalances.put(delta.getKey(), updated);
+        }
+        insertJournal(entry);
+        updateBalances(updatedBalances);
+        if (entry.clientId() != null) insertIdempotency(entry);
+    }
+
+    private IssuanceRecord readIssuance(ResultSet result) throws SQLException {
+        String approver = result.getString("approver_id");
+        long approvedAt = result.getLong("approved_at_epoch_ms");
+        String executed = result.getString("executed_entry_id");
+        return new IssuanceRecord(UUID.fromString(result.getString("request_id")),
+                com.blocke.centraleconomy.domain.money.Money.ofMinor(result.getLong("amount_minor")),
+                IssuanceRecord.Status.valueOf(result.getString("status")), result.getString("reason"),
+                result.getString("requester_id"), approver,
+                Instant.ofEpochMilli(result.getLong("requested_at_epoch_ms")),
+                approver == null ? null : Instant.ofEpochMilli(approvedAt),
+                executed == null ? null : UUID.fromString(executed));
+    }
+
+    private long flowSince(JournalType type, AccountId positiveAccount, Instant since) {
+        requireOpen();
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT COALESCE(SUM(p.amount_minor), 0)
+                FROM journal_entries j JOIN postings p ON p.entry_id = j.entry_id
+                WHERE j.journal_type = ? AND p.account_id = ? AND p.amount_minor > 0
+                    AND j.created_at_epoch_ms >= ?
+                """)) {
+            statement.setString(1, type.name());
+            statement.setString(2, positiveAccount.value());
+            statement.setLong(3, since.toEpochMilli());
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getLong(1) : 0;
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to query monetary flow", exception);
+        }
+    }
+
+    private void insertAudit(String actorId, String action, String memo, UUID entryId, Instant at)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO audit_events(event_id, actor_id, action, memo, entry_id, created_at_epoch_ms)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """)) {
+            statement.setString(1, UUID.randomUUID().toString());
+            statement.setString(2, actorId);
+            statement.setString(3, action);
+            statement.setString(4, memo);
+            statement.setString(5, entryId == null ? null : entryId.toString());
+            statement.setLong(6, at.toEpochMilli());
+            statement.executeUpdate();
         }
     }
 

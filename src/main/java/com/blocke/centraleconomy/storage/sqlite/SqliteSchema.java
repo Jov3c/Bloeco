@@ -59,6 +59,11 @@ final class SqliteSchema {
                     )
                     """);
             statement.executeUpdate("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS one_reversal_per_journal
+                    ON journal_entries(reversal_of_entry_id)
+                    WHERE reversal_of_entry_id IS NOT NULL
+                    """);
+            statement.executeUpdate("""
                     CREATE INDEX IF NOT EXISTS postings_by_account
                     ON postings(account_id, entry_id)
                     """);
