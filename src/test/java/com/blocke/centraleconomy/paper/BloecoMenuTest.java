@@ -162,12 +162,20 @@ class BloecoMenuTest {
             assertNavigation(player);
             assertTrue(player.getOpenInventory().getTopInventory().getItem(14).getItemMeta().getLore()
                     .contains("贷款年化利率：3.2%"));
-            assertEquals("信用等级", displayName(player, 18));
-            assertTrue(player.getOpenInventory().getTopInventory().getItem(18).getItemMeta().getLore()
-                    .contains("A级：无未结清贷款"));
+            assertNull(player.getOpenInventory().getTopInventory().getItem(18));
+            bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join();
+            server.getScheduler().performTicks(2);
+            assertTrue(player.getOpenInventory().getTopInventory().getItem(4).getItemMeta().getLore()
+                    .stream().noneMatch(line -> line.startsWith("信用等级：")));
             player.simulateInventoryClick(4);
             assertEquals("Bloeco 银行账户详情", player.getOpenInventory().getTitle());
             assertNavigation(player);
+            bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join();
+            server.getScheduler().performTicks(2);
+            assertNull(player.getOpenInventory().getTopInventory().getItem(13));
+            assertEquals("信用等级", displayName(player, 16));
+            assertTrue(player.getOpenInventory().getTopInventory().getItem(16).getItemMeta().getLore()
+                    .contains("A级：无未结清贷款"));
             player.simulateInventoryClick(21);
             player.simulateInventoryClick(14);
             assertEquals("Bloeco 银行 - 贷款", player.getOpenInventory().getTitle());
@@ -221,6 +229,42 @@ class BloecoMenuTest {
             var snapshot = bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join().value();
             assertEquals(Money.parse("123.45"), snapshot.wallet());
             assertEquals(Money.parse("123.52"), snapshot.loanDebt());
+        }
+    }
+
+    @Test
+    void depositAndWithdrawalPagesCanMoveTheEntireCurrentBalance() {
+        Path database = temporaryDirectory.resolve("all-bank-amount.db");
+        Clock clock = Clock.systemUTC();
+        try (AsyncEconomyFacade bankEconomy = AsyncEconomyFacade.sqlite(
+                database, clock, Money.parse("1000000"));
+             AsyncBankingFacade bank = new AsyncBankingFacade(
+                     () -> new SqliteBankingStore(database, clock), bankEconomy.readyStage(),
+                     Money.parse("250000"),
+                     new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7))) {
+            assertTrue(bank.readyStage().toCompletableFuture().join().isSuccess());
+            var plugin = MockBukkit.createMockPlugin();
+            var player = server.addPlayer("AllBalanceCustomer");
+            assertTrue(bankEconomy.adjustPlayerBalance(player.getUniqueId(), Money.parse("123.45"),
+                    "test", "测试全部存取", "fund-all-balance").toCompletableFuture().join().isSuccess());
+            BloecoMenu menu = new BloecoMenu(plugin, bankEconomy, bank, new RoleAccess());
+
+            menu.open(player);
+            player.simulateInventoryClick(12);
+            player.simulateInventoryClick(10);
+            assertEquals("全部存入", displayName(player, 16));
+            player.simulateInventoryClick(16);
+            var deposited = bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join().value();
+            assertEquals(Money.ofMinor(0), deposited.wallet());
+            assertEquals(Money.parse("123.45"), deposited.deposit());
+
+            server.getScheduler().performTicks(2);
+            player.simulateInventoryClick(12);
+            assertEquals("全部取出", displayName(player, 16));
+            player.simulateInventoryClick(16);
+            var withdrawn = bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join().value();
+            assertEquals(Money.parse("123.45"), withdrawn.wallet());
+            assertEquals(Money.ofMinor(0), withdrawn.deposit());
         }
     }
 

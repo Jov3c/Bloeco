@@ -208,7 +208,10 @@ public final class BloecoMenu implements Listener {
             else if (slot == 16) openBankAmounts(player, BankAction.REPAY, bank.nextLoanId, bank.nextLoanDue);
         } else if (holder instanceof BankAmountHolder amounts) {
             Money amount = amounts.amounts.get(slot);
-            if (slot == 18 && amounts.action != BankAction.REPAY) {
+            if (slot == 16 && (amounts.action == BankAction.DEPOSIT
+                    || amounts.action == BankAction.WITHDRAW)) {
+                performAllBanking(player, amounts.action);
+            } else if (slot == 18 && amounts.action != BankAction.REPAY) {
                 beginAmountInput(player, AmountInput.banking(amounts.action, amounts.loanId));
             } else if (amount != null) performBanking(player, amounts.action, amounts.loanId, amount);
         } else if (holder instanceof BankAdminHolder admin && admin.policy != null
@@ -225,7 +228,6 @@ public final class BloecoMenu implements Listener {
         inventory.setItem(12, item(Material.DROPPER, "取出存款", List.of("选择金额返回钱包")));
         inventory.setItem(14, item(Material.GOLD_INGOT, "申请贷款", loanSummaryLore(currentBankPolicy)));
         inventory.setItem(16, item(Material.PAPER, "偿还贷款", List.of("优先偿还最早到期贷款")));
-        inventory.setItem(18, item(Material.EXPERIENCE_BOTTLE, "信用等级", creditLore("正在读取")));
         addNavigation(inventory);
         player.openInventory(inventory);
         banking.playerSnapshot(player.getUniqueId()).thenAccept(result -> runMain(() -> {
@@ -241,10 +243,7 @@ public final class BloecoMenu implements Listener {
                     "钱包：" + MessageFormatter.money(snapshot.wallet()),
                     "存款：" + MessageFormatter.money(snapshot.deposit()),
                     "待还：" + MessageFormatter.money(snapshot.loanDebt()),
-                    "信用等级：" + snapshot.creditGrade(),
                     snapshot.hasOverdueLoan() ? "状态：存在逾期" : "状态：正常")));
-            inventory.setItem(18, item(Material.EXPERIENCE_BOTTLE, "信用等级",
-                    creditLore(snapshot.creditGrade())));
         }));
         banking.bankSnapshot().thenAccept(result -> runMain(() -> {
             if (!result.isSuccess() || !isOpen(player, holder)) return;
@@ -266,6 +265,7 @@ public final class BloecoMenu implements Listener {
                 return;
             }
             var snapshot = result.value();
+            inventory.setItem(13, null);
             inventory.setItem(10, item(Material.GOLD_INGOT, "钱包余额",
                     List.of(MessageFormatter.money(snapshot.wallet()))));
             inventory.setItem(12, item(Material.IRON_INGOT, "银行存款",
@@ -304,6 +304,13 @@ public final class BloecoMenu implements Listener {
             inventory.setItem(16, item(Material.NETHER_STAR, "全部偿还 " + MessageFormatter.money(exactDue),
                     List.of("精确结清最早到期贷款")));
         }
+        if (action == BankAction.DEPOSIT) {
+            inventory.setItem(16, item(Material.CHEST, "全部存入",
+                    List.of("把当前钱包余额全部存入银行")));
+        } else if (action == BankAction.WITHDRAW) {
+            inventory.setItem(16, item(Material.ENDER_CHEST, "全部取出",
+                    List.of("把当前银行存款全部取回钱包")));
+        }
         if (action != BankAction.REPAY) {
             inventory.setItem(18, item(Material.NAME_TAG, "自定义金额", List.of("点击后在聊天栏输入金额")));
         }
@@ -319,6 +326,19 @@ public final class BloecoMenu implements Listener {
             case BORROW -> banking.borrow(player.getUniqueId(), amount, key);
             case REPAY -> banking.repay(player.getUniqueId(), loanId, amount, key);
         };
+        player.closeInventory();
+        player.sendMessage("银行请求已提交，请稍候。");
+        stage.thenAccept(result -> runMain(() -> {
+            player.sendMessage(result.isSuccess() ? action.title + "完成。" : MessageFormatter.error(result));
+            openBank(player);
+        }));
+    }
+
+    private void performAllBanking(Player player, BankAction action) {
+        String key = "bank-gui:" + UUID.randomUUID();
+        java.util.concurrent.CompletionStage<? extends Result<?>> stage = action == BankAction.DEPOSIT
+                ? banking.depositAll(player.getUniqueId(), key)
+                : banking.withdrawAll(player.getUniqueId(), key);
         player.closeInventory();
         player.sendMessage("银行请求已提交，请稍候。");
         stage.thenAccept(result -> runMain(() -> {

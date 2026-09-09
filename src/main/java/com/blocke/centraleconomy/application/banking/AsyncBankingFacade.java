@@ -66,8 +66,16 @@ public final class AsyncBankingFacade implements AutoCloseable {
         return submit(value -> value.deposit(playerId, amount, key));
     }
 
+    public CompletionStage<Result<BankingReceipt>> depositAll(UUID playerId, String key) {
+        return submit(value -> value.depositAll(playerId, key));
+    }
+
     public CompletionStage<Result<BankingReceipt>> withdraw(UUID playerId, Money amount, String key) {
         return submit(value -> value.withdraw(playerId, amount, key));
+    }
+
+    public CompletionStage<Result<BankingReceipt>> withdrawAll(UUID playerId, String key) {
+        return submit(value -> value.withdrawAll(playerId, key));
     }
 
     public CompletionStage<Result<LoanReceipt>> borrow(UUID playerId, Money amount, String key) {

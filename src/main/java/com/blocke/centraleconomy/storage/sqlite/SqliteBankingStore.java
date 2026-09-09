@@ -130,6 +130,43 @@ public class SqliteBankingStore implements BankingStore {
     }
 
     @Override
+    public synchronized BankingReceipt depositAll(UUID playerId, String key) {
+        return write(() -> {
+            Operation replay = operation(key);
+            if (replay != null) return replay.receipt("DEPOSIT", playerId);
+            accrueDeposit(playerId);
+            AccountId wallet = ensurePlayer(playerId);
+            long amount = balance(wallet);
+            if (amount <= 0) throw insufficient("钱包中没有可存入的余额");
+            transfer(wallet, AccountId.bankCash(), amount);
+            try (PreparedStatement statement = connection.prepareStatement(mysql ? """
+                    INSERT INTO bank_deposits(bank_id, player_uuid, principal_minor,
+                        accrued_interest_minor, last_interest_epoch_ms, status, updated_at_epoch_ms)
+                    VALUES (?, ?, ?, 0, ?, 'ACTIVE', ?)
+                    ON DUPLICATE KEY UPDATE principal_minor = principal_minor + VALUES(principal_minor),
+                        status = 'ACTIVE', updated_at_epoch_ms = VALUES(updated_at_epoch_ms)
+                    """ : """
+                    INSERT INTO bank_deposits(bank_id, player_uuid, principal_minor,
+                        accrued_interest_minor, last_interest_epoch_ms, status, updated_at_epoch_ms)
+                    VALUES (?, ?, ?, 0, ?, 'ACTIVE', ?)
+                    ON CONFLICT(bank_id, player_uuid) DO UPDATE SET
+                        principal_minor = principal_minor + excluded.principal_minor,
+                        status = 'ACTIVE', updated_at_epoch_ms = excluded.updated_at_epoch_ms
+                    """)) {
+                statement.setString(1, BANK_ID);
+                statement.setString(2, playerId.toString());
+                statement.setLong(3, amount);
+                statement.setLong(4, clock.millis());
+                statement.setLong(5, clock.millis());
+                statement.executeUpdate();
+            }
+            UUID journal = journal(JournalType.BANK_DEPOSIT, "全部存入 Bloeco 国有银行",
+                    key, wallet, AccountId.bankCash(), amount);
+            return operation(key, "DEPOSIT", playerId, amount, null, journal).receipt();
+        });
+    }
+
+    @Override
     public synchronized BankingReceipt withdraw(UUID playerId, Money amount, String key) {
         requirePositive(amount);
         return write(() -> {
@@ -170,6 +207,41 @@ public class SqliteBankingStore implements BankingStore {
             UUID journal = journal(JournalType.BANK_WITHDRAWAL, "从 Bloeco 国有银行取出存款",
                     key, AccountId.bankCash(), wallet, amount.minor());
             return operation(key, "WITHDRAW", playerId, amount.minor(), null, journal).receipt();
+        });
+    }
+
+    @Override
+    public synchronized BankingReceipt withdrawAll(UUID playerId, String key) {
+        return write(() -> {
+            Operation replay = operation(key);
+            if (replay != null) return replay.receipt("WITHDRAW", playerId);
+            accrueDeposit(playerId);
+            long amount = depositBalance(playerId);
+            if (amount <= 0) throw insufficient("银行中没有可取出的存款");
+            BankingPolicy currentPolicy = policy();
+            long allDeposits = scalar("SELECT COALESCE(SUM(principal_minor + accrued_interest_minor),0) FROM bank_deposits WHERE status='ACTIVE'");
+            long cash = balance(AccountId.bankCash());
+            long remainingDeposits = allDeposits - amount;
+            if (cash - amount < percentage(remainingDeposits, currentPolicy.reserveRatioBasisPoints())) {
+                throw rejected("取款后将低于最低准备金率");
+            }
+            AccountId wallet = ensurePlayer(playerId);
+            transfer(AccountId.bankCash(), wallet, amount);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE bank_deposits SET principal_minor = 0, accrued_interest_minor = 0,
+                        updated_at_epoch_ms = ?
+                    WHERE bank_id = ? AND player_uuid = ?
+                        AND principal_minor + accrued_interest_minor = ?
+                    """)) {
+                statement.setLong(1, clock.millis());
+                statement.setString(2, BANK_ID);
+                statement.setString(3, playerId.toString());
+                statement.setLong(4, amount);
+                if (statement.executeUpdate() != 1) throw insufficient("银行存款余额发生变化，请重试");
+            }
+            UUID journal = journal(JournalType.BANK_WITHDRAWAL, "从 Bloeco 国有银行取出全部存款",
+                    key, AccountId.bankCash(), wallet, amount);
+            return operation(key, "WITHDRAW", playerId, amount, null, journal).receipt();
         });
     }
 
@@ -664,6 +736,13 @@ public class SqliteBankingStore implements BankingStore {
         BankingReceipt receipt() { return new BankingReceipt(id, journalId, Money.ofMinor(amount)); }
         BankingReceipt receipt(String expectedType, UUID expectedPlayer, long expectedAmount) {
             validate(expectedType, expectedPlayer, expectedAmount);
+            return receipt();
+        }
+        BankingReceipt receipt(String expectedType, UUID expectedPlayer) {
+            if (!type.equals(expectedType) || !Objects.equals(playerId, expectedPlayer)) {
+                throw new LedgerException(LedgerException.Code.IDEMPOTENCY_CONFLICT,
+                        "幂等键已用于其他银行操作");
+            }
             return receipt();
         }
         private void validate(String expectedType, UUID expectedPlayer, long expectedAmount) {

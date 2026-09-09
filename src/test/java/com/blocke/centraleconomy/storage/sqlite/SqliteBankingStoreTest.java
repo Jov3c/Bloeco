@@ -90,4 +90,34 @@ class SqliteBankingStoreTest {
             assertEquals(true, ledger.verifyIntegrity().valid());
         }
     }
+
+    @Test
+    void allBalanceOperationsUseTheCommittedAmountAndReplaySafely() {
+        Path database = temporaryDirectory.resolve("all-balance.db");
+        UUID player = UUID.fromString("00000000-0000-0000-0000-000000001303");
+        Clock clock = Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneOffset.UTC);
+        try (AsyncEconomyFacade economy = AsyncEconomyFacade.sqlite(
+                database, clock, Money.parse("1000000"))) {
+            economy.readyStage().toCompletableFuture().join();
+            economy.adjustPlayerBalance(player, Money.parse("123.45"), "test",
+                    "测试全部存取", "all-balance-fund").toCompletableFuture().join();
+        }
+
+        BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
+        try (SqliteBankingStore bank = new SqliteBankingStore(database, clock)) {
+            bank.initialize(Money.parse("250000"), policy);
+            var deposit = bank.depositAll(player, "deposit-all");
+            var depositReplay = bank.depositAll(player, "deposit-all");
+            assertEquals(deposit.journalId(), depositReplay.journalId());
+            assertEquals(Money.parse("123.45"), deposit.amount());
+            assertEquals(Money.ofMinor(0), bank.playerSnapshot(player).wallet());
+
+            var withdrawal = bank.withdrawAll(player, "withdraw-all");
+            var withdrawalReplay = bank.withdrawAll(player, "withdraw-all");
+            assertEquals(withdrawal.journalId(), withdrawalReplay.journalId());
+            assertEquals(Money.parse("123.45"), withdrawal.amount());
+            assertEquals(Money.parse("123.45"), bank.playerSnapshot(player).wallet());
+            assertEquals(Money.ofMinor(0), bank.playerSnapshot(player).deposit());
+        }
+    }
 }

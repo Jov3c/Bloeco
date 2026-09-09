@@ -20,12 +20,16 @@ class MySqlBankingStoreIntegrationTest {
         String password = System.getenv("BLOECO_MYSQL_TEST_PASSWORD");
         Clock clock = Clock.systemUTC();
         UUID player = UUID.fromString("00000000-0000-0000-0000-000000001399");
+        UUID allBalancePlayer = UUID.randomUUID();
+        String allBalanceKey = allBalancePlayer.toString();
         try (MySqlLedgerStore ledger = new MySqlLedgerStore(url, username, password, 4)) {
             CentralBankService central = new CentralBankService(ledger, clock);
             central.initializeCentralAccounts();
             central.bootstrapTreasury(Money.parse("1000000"));
             central.adjustPlayerBalance(player, Money.parse("1000"), "mysql-bank-test",
                     "MySQL 银行测试资金", "mysql-bank-fund");
+            central.adjustPlayerBalance(allBalancePlayer, Money.parse("123.45"), "mysql-bank-test",
+                    "MySQL 银行全部存取测试资金", "mysql-bank-all-fund:" + allBalanceKey);
         }
         BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
         try (MySqlBankingStore bank = new MySqlBankingStore(url, username, password, 4, clock)) {
@@ -35,6 +39,12 @@ class MySqlBankingStoreIntegrationTest {
             bank.repay(player, loan.loanId(), Money.parse("100.06"), "mysql-bank-repay");
             assertEquals(Money.parse("500"), bank.playerSnapshot(player).deposit());
             assertEquals(Money.ofMinor(0), bank.playerSnapshot(player).loanDebt());
+            bank.depositAll(allBalancePlayer, "mysql-bank-deposit-all:" + allBalanceKey);
+            assertEquals(Money.ofMinor(0), bank.playerSnapshot(allBalancePlayer).wallet());
+            assertEquals(Money.parse("123.45"), bank.playerSnapshot(allBalancePlayer).deposit());
+            bank.withdrawAll(allBalancePlayer, "mysql-bank-withdraw-all:" + allBalanceKey);
+            assertEquals(Money.parse("123.45"), bank.playerSnapshot(allBalancePlayer).wallet());
+            assertEquals(Money.ofMinor(0), bank.playerSnapshot(allBalancePlayer).deposit());
         }
         try (MySqlLedgerStore ledger = new MySqlLedgerStore(url, username, password, 4)) {
             assertEquals(100_000_000L, ledger.monetaryTotals().netSupplyMinor());

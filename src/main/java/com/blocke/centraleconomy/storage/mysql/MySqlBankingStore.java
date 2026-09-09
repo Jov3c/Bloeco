@@ -46,8 +46,14 @@ public final class MySqlBankingStore implements BankingStore {
     @Override public BankingReceipt deposit(UUID player, Money amount, String key) {
         return call(store -> store.deposit(player, amount, key));
     }
+    @Override public BankingReceipt depositAll(UUID player, String key) {
+        return call(store -> store.depositAll(player, key));
+    }
     @Override public BankingReceipt withdraw(UUID player, Money amount, String key) {
         return call(store -> store.withdraw(player, amount, key));
+    }
+    @Override public BankingReceipt withdrawAll(UUID player, String key) {
+        return call(store -> store.withdrawAll(player, key));
     }
     @Override public LoanReceipt borrow(UUID player, Money amount, String key) {
         return call(store -> store.borrow(player, amount, key));

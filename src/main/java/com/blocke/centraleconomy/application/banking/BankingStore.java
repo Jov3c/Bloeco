@@ -11,7 +11,9 @@ import java.util.UUID;
 public interface BankingStore extends AutoCloseable {
     void initialize(Money initialCapital, BankingPolicy defaults);
     BankingReceipt deposit(UUID playerId, Money amount, String idempotencyKey);
+    BankingReceipt depositAll(UUID playerId, String idempotencyKey);
     BankingReceipt withdraw(UUID playerId, Money amount, String idempotencyKey);
+    BankingReceipt withdrawAll(UUID playerId, String idempotencyKey);
     LoanReceipt borrow(UUID playerId, Money principal, String idempotencyKey);
     BankingReceipt repay(UUID playerId, UUID loanId, Money amount, String idempotencyKey);
     BankingPlayerSnapshot playerSnapshot(UUID playerId);
