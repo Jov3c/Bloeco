@@ -22,10 +22,10 @@ public final class MessageFormatter {
         if (result.isSuccess()) throw new IllegalArgumentException("success has no error");
         ErrorCode code = result.errorCode();
         return switch (code) {
-            case INSUFFICIENT_FUNDS -> "余额不足，操作未入账。";
+            case INSUFFICIENT_FUNDS -> "余额不足，操作未完成。";
             case IDEMPOTENCY_CONFLICT -> "该业务编号已被其他请求使用。";
             case POLICY_REJECTED -> "经济政策拒绝了该操作：" + result.message();
-            case ACCOUNT_FROZEN -> "账户已冻结，操作未入账。";
+            case ACCOUNT_FROZEN -> "账户已冻结，操作未完成。";
             case STORAGE_UNAVAILABLE -> "经济中心暂时不可用，请稍后重试。";
             default -> "经济操作失败：" + result.message();
         };

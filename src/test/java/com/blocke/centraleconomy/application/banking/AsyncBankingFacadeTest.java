@@ -25,7 +25,7 @@ class AsyncBankingFacadeTest {
             economy.readyStage().toCompletableFuture().join();
             economy.adjustPlayerBalance(player, Money.parse("100.00"), "test", "银行测试", "fund")
                     .toCompletableFuture().join();
-            BankingPolicy policy = new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7);
+            BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
             try (AsyncBankingFacade banking = new AsyncBankingFacade(
                     () -> new SqliteBankingStore(database, clock), economy.readyStage(),
                     Money.parse("250000"), policy)) {

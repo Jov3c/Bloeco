@@ -21,4 +21,19 @@ public record BankingPolicy(
             throw new IllegalArgumentException("loan limits and term must be positive");
         }
     }
+
+    public Money quotedInterest(Money principal) {
+        return annualizedInterest(principal, loanRateBasisPoints, loanTermDays);
+    }
+
+    public Money quotedTotalDue(Money principal) {
+        return Money.ofMinor(Math.addExact(principal.minor(), quotedInterest(principal).minor()));
+    }
+
+    public static Money annualizedInterest(Money principal, int annualBasisPoints, long termDays) {
+        Objects.requireNonNull(principal, "principal");
+        if (principal.minor() <= 0 || annualBasisPoints <= 0 || termDays <= 0) return Money.ofMinor(0);
+        long numerator = Math.multiplyExact(Math.multiplyExact(principal.minor(), annualBasisPoints), termDays);
+        return Money.ofMinor(Math.max(1L, numerator / 3_650_000L));
+    }
 }

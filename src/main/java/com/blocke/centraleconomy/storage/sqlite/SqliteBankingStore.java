@@ -181,7 +181,10 @@ public class SqliteBankingStore implements BankingStore {
             if (replay != null) {
                 replay.validate("LOAN", playerId, principal.minor());
                 LoanState existingLoan = loan(replay.loanId);
-                long originalInterest = percentage(existingLoan.originalPrincipal, existingLoan.interestRateBasisPoints);
+                long termDays = Math.max(1, ChronoUnit.DAYS.between(existingLoan.issuedAt, existingLoan.dueAt));
+                long originalInterest = BankingPolicy.annualizedInterest(
+                        Money.ofMinor(existingLoan.originalPrincipal),
+                        existingLoan.interestRateBasisPoints, termDays).minor();
                 return new LoanReceipt(replay.loanId, replay.journalId, Money.ofMinor(existingLoan.originalPrincipal),
                         Money.ofMinor(existingLoan.originalPrincipal + originalInterest), existingLoan.dueAt);
             }
@@ -200,7 +203,7 @@ public class SqliteBankingStore implements BankingStore {
             UUID journal = journal(JournalType.LOAN_DISBURSEMENT, "Bloeco 国有银行发放信用贷款",
                     key, AccountId.bankCash(), wallet, principal.minor());
             UUID loanId = UUID.randomUUID();
-            long interest = percentage(principal.minor(), policy.loanRateBasisPoints());
+            long interest = policy.quotedInterest(principal).minor();
             Instant dueAt = clock.instant().plus(policy.loanTermDays(), ChronoUnit.DAYS);
             try (PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO bank_loans(loan_id, bank_id, borrower_uuid, original_principal_minor,
@@ -279,6 +282,7 @@ public class SqliteBankingStore implements BankingStore {
             long walletBalance;
             try { walletBalance = balance(wallet); } catch (LedgerException exception) { walletBalance = 0; }
             long debt = playerDebt(playerId);
+            BankingPolicy currentPolicy = policy();
             boolean overdue;
             UUID nextLoanId = null;
             Money nextLoanDue = Money.ofMinor(0);
@@ -299,8 +303,10 @@ public class SqliteBankingStore implements BankingStore {
                     } else overdue = false;
                 }
             }
+            String grade = debt == 0 ? "A" : overdue ? "D"
+                    : debt >= currentPolicy.maximumLoan().minor() * 8L / 10L ? "C" : "B";
             return new BankingPlayerSnapshot(Money.ofMinor(walletBalance), Money.ofMinor(depositBalance(playerId)),
-                    Money.ofMinor(debt), overdue, debt == 0 ? "A" : overdue ? "D" : "B",
+                    Money.ofMinor(debt), overdue, grade,
                     nextLoanId, nextLoanDue);
         });
     }
@@ -508,6 +514,7 @@ public class SqliteBankingStore implements BankingStore {
                         result.getLong("original_principal_minor"), result.getInt("interest_rate_bps"),
                         result.getLong("outstanding_principal_minor"),
                         result.getLong("outstanding_interest_minor"),
+                        Instant.ofEpochMilli(result.getLong("issued_at_epoch_ms")),
                         Instant.ofEpochMilli(result.getLong("due_at_epoch_ms")));
             }
         }
@@ -652,7 +659,7 @@ public class SqliteBankingStore implements BankingStore {
 
     @FunctionalInterface private interface SqlSupplier<T> { T get() throws SQLException; }
     private record LoanState(UUID playerId, long originalPrincipal, int interestRateBasisPoints,
-                             long principal, long interest, Instant dueAt) {}
+                             long principal, long interest, Instant issuedAt, Instant dueAt) {}
     private record Operation(UUID id, String type, UUID playerId, long amount, UUID loanId, UUID journalId) {
         BankingReceipt receipt() { return new BankingReceipt(id, journalId, Money.ofMinor(amount)); }
         BankingReceipt receipt(String expectedType, UUID expectedPlayer, long expectedAmount) {

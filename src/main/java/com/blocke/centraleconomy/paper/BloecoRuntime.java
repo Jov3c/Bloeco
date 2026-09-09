@@ -70,6 +70,6 @@ public final class BloecoRuntime implements AutoCloseable {
     }
 
     private static BankingPolicy defaultBankingPolicy() {
-        return new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7);
+        return new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
     }
 }

@@ -103,4 +103,17 @@ class PluginBootstrapTest {
         assertEquals(java.util.List.of("Receiver"), players);
         assertEquals(java.util.List.of("1", "10", "100", "1000"), amounts);
     }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void acceptedPaymentUsesAConcisePlayerFacingStatusMessage() {
+        CentralEconomyPlugin plugin = MockBukkit.load(CentralEconomyPlugin.class);
+        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        var payer = MockBukkit.getMock().addPlayer("Payer");
+        MockBukkit.getMock().addPlayer("Receiver");
+
+        payer.performCommand("pay Receiver 10");
+
+        payer.assertSaid("转账请求已提交，请稍候。");
+    }
 }

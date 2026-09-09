@@ -27,12 +27,12 @@ class MySqlBankingStoreIntegrationTest {
             central.adjustPlayerBalance(player, Money.parse("1000"), "mysql-bank-test",
                     "MySQL 银行测试资金", "mysql-bank-fund");
         }
-        BankingPolicy policy = new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7);
+        BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
         try (MySqlBankingStore bank = new MySqlBankingStore(url, username, password, 4, clock)) {
             bank.initialize(Money.parse("250000"), policy);
             bank.deposit(player, Money.parse("500"), "mysql-bank-deposit");
             var loan = bank.borrow(player, Money.parse("100"), "mysql-bank-loan");
-            bank.repay(player, loan.loanId(), Money.parse("105"), "mysql-bank-repay");
+            bank.repay(player, loan.loanId(), Money.parse("100.06"), "mysql-bank-repay");
             assertEquals(Money.parse("500"), bank.playerSnapshot(player).deposit());
             assertEquals(Money.ofMinor(0), bank.playerSnapshot(player).loanDebt());
         }

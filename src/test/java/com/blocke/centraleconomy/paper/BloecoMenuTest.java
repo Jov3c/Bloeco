@@ -80,6 +80,11 @@ class BloecoMenuTest {
         assertNavigation(player);
         player.simulateInventoryClick(0);
         assertNavigation(player);
+        assertEquals("自定义金额", displayName(player, 16));
+        player.simulateInventoryClick(16);
+        submitAmount(menu, player, "取消");
+        server.getScheduler().performTicks(2);
+        assertEquals("Bloeco 转账 - Recipient", player.getOpenInventory().getTitle());
         player.simulateInventoryClick(21);
         assertEquals("Bloeco 转账 - 选择玩家", player.getOpenInventory().getTitle());
         player.simulateInventoryClick(22);
@@ -143,17 +148,38 @@ class BloecoMenuTest {
              AsyncBankingFacade bank = new AsyncBankingFacade(
                      () -> new SqliteBankingStore(database, clock), bankEconomy.readyStage(),
                      Money.parse("250000"),
-                     new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7))) {
+                     new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7))) {
             assertTrue(bank.readyStage().toCompletableFuture().join().isSuccess());
             var plugin = MockBukkit.createMockPlugin();
             var player = server.addPlayer("BankCustomer");
             BloecoMenu menu = new BloecoMenu(plugin, bankEconomy, bank, new RoleAccess());
+            bank.bankSnapshot().toCompletableFuture().join();
 
             menu.open(player);
             assertEquals("国有银行", displayName(player, 12));
             player.simulateInventoryClick(12);
             assertEquals("Bloeco 国有银行", player.getOpenInventory().getTitle());
             assertNavigation(player);
+            assertTrue(player.getOpenInventory().getTopInventory().getItem(14).getItemMeta().getLore()
+                    .contains("贷款年化利率：3.2%"));
+            assertEquals("信用等级", displayName(player, 18));
+            assertTrue(player.getOpenInventory().getTopInventory().getItem(18).getItemMeta().getLore()
+                    .contains("A级：无未结清贷款"));
+            player.simulateInventoryClick(4);
+            assertEquals("Bloeco 银行账户详情", player.getOpenInventory().getTitle());
+            assertNavigation(player);
+            player.simulateInventoryClick(21);
+            player.simulateInventoryClick(14);
+            assertEquals("Bloeco 银行 - 贷款", player.getOpenInventory().getTitle());
+            assertTrue(player.getOpenInventory().getTopInventory().getItem(10).getItemMeta().getLore()
+                    .contains("预计应还：100.06"));
+            assertEquals("自定义金额", displayName(player, 18));
+            player.simulateInventoryClick(18);
+            submitAmount(menu, player, "取消");
+            server.getScheduler().performTicks(2);
+            assertEquals("Bloeco 国有银行", player.getOpenInventory().getTitle());
+            player.simulateInventoryClick(22);
+            player.simulateInventoryClick(12);
             player.simulateInventoryClick(10);
             assertEquals("Bloeco 银行 - 存款", player.getOpenInventory().getTitle());
             assertNavigation(player);
@@ -169,6 +195,35 @@ class BloecoMenuTest {
         }
     }
 
+    @Test
+    void customLoanAmountEnteredInChatIsSubmitted() {
+        Path database = temporaryDirectory.resolve("custom-bank-amount.db");
+        Clock clock = Clock.systemUTC();
+        try (AsyncEconomyFacade bankEconomy = AsyncEconomyFacade.sqlite(
+                database, clock, Money.parse("1000000"));
+             AsyncBankingFacade bank = new AsyncBankingFacade(
+                     () -> new SqliteBankingStore(database, clock), bankEconomy.readyStage(),
+                     Money.parse("250000"),
+                     new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7))) {
+            assertTrue(bank.readyStage().toCompletableFuture().join().isSuccess());
+            var plugin = MockBukkit.createMockPlugin();
+            var player = server.addPlayer("CustomBorrower");
+            BloecoMenu menu = new BloecoMenu(plugin, bankEconomy, bank, new RoleAccess());
+            bank.bankSnapshot().toCompletableFuture().join();
+
+            menu.open(player);
+            player.simulateInventoryClick(12);
+            player.simulateInventoryClick(14);
+            player.simulateInventoryClick(18);
+            submitAmount(menu, player, "123.45");
+            server.getScheduler().performTicks(2);
+
+            var snapshot = bank.playerSnapshot(player.getUniqueId()).toCompletableFuture().join().value();
+            assertEquals(Money.parse("123.45"), snapshot.wallet());
+            assertEquals(Money.parse("123.52"), snapshot.loanDebt());
+        }
+    }
+
     @SuppressWarnings("deprecation")
     private static String displayName(org.mockbukkit.mockbukkit.entity.PlayerMock player, int slot) {
         return player.getOpenInventory().getTopInventory().getItem(slot).getItemMeta().getDisplayName();
@@ -177,5 +232,19 @@ class BloecoMenuTest {
     private static void assertNavigation(org.mockbukkit.mockbukkit.entity.PlayerMock player) {
         assertNotNull(player.getOpenInventory().getTopInventory().getItem(21), "missing back button");
         assertNotNull(player.getOpenInventory().getTopInventory().getItem(22), "missing home button");
+    }
+
+    private static void submitAmount(BloecoMenu menu,
+                                     org.mockbukkit.mockbukkit.entity.PlayerMock player,
+                                     String text) {
+        var component = net.kyori.adventure.text.Component.text(text);
+        menu.onAmountInput(new io.papermc.paper.event.player.AsyncChatEvent(
+                true,
+                player,
+                java.util.Set.of(player),
+                io.papermc.paper.chat.ChatRenderer.defaultRenderer(),
+                component,
+                component,
+                net.kyori.adventure.chat.SignedMessage.system(text, component)));
     }
 }

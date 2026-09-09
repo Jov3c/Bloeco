@@ -8,6 +8,8 @@ import com.blocke.centraleconomy.application.command.PlayerPayment;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
+import io.papermc.paper.event.player.AsyncChatEvent;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
@@ -16,6 +18,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -27,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.time.ZoneId;
 
 /** GUI-first access to balances, player clearing, fiscal policy, and monetary controls. */
@@ -39,6 +43,8 @@ public final class BloecoMenu implements Listener {
     private final AsyncEconomyFacade economy;
     private final AsyncBankingFacade banking;
     private final RoleAccess roles;
+    private volatile BankingPolicy currentBankPolicy;
+    private final Map<UUID, AmountInput> amountInputs = new ConcurrentHashMap<>();
 
     public BloecoMenu(Plugin plugin, AsyncEconomyFacade economy, RoleAccess roles) {
         this(plugin, economy, null, roles);
@@ -51,27 +57,26 @@ public final class BloecoMenu implements Listener {
         this.banking = banking;
         this.roles = Objects.requireNonNull(roles, "roles");
         Bukkit.getPluginManager().registerEvents(this, plugin);
+        if (banking != null) refreshCachedBankPolicy();
     }
 
     public void open(Player player) {
         HubHolder holder = new HubHolder(this);
         Inventory inventory = inventory(holder, "Bloeco 经济中心");
-        inventory.setItem(4, item(Material.GOLD_INGOT, "我的余额", List.of("正在读取中央账本…")));
+        inventory.setItem(4, item(Material.GOLD_INGOT, "我的余额", List.of("正在读取余额…")));
         if (banking != null) inventory.setItem(12, item(Material.IRON_DOOR, "国有银行",
                 List.of("存款、取款、贷款与还款")));
-        inventory.setItem(14, item(Material.EMERALD, "玩家转账", List.of("本金、手续费与所得税统一清算")));
+        inventory.setItem(14, item(Material.EMERALD, "玩家转账", List.of("手续费和税费自动计算")));
         if (roles.anyAdministration(player)) {
             inventory.setItem(16, item(Material.NETHER_STAR, "中央银行管理", List.of("按权限显示可用功能")));
         }
         inventory.setItem(22, item(Material.BARRIER, "关闭", List.of("关闭 Bloeco 菜单")));
         player.openInventory(inventory);
         economy.playerBalance(player.getUniqueId()).thenAccept(result -> runMain(() -> {
-            if (!(player.getOpenInventory().getTopInventory().getHolder() instanceof HubHolder current)
-                    || !current.belongsTo(this)) return;
+            if (!isOpen(player, holder)) return;
             String line = result.isSuccess() ? "余额：" + MessageFormatter.moneyMinor(result.value())
                     : MessageFormatter.error(result);
-            player.getOpenInventory().getTopInventory().setItem(4,
-                    item(Material.GOLD_INGOT, "我的余额", List.of(line)));
+            inventory.setItem(4, item(Material.GOLD_INGOT, "我的余额", List.of(line)));
         }));
     }
 
@@ -97,8 +102,10 @@ public final class BloecoMenu implements Listener {
             Money amount = AMOUNTS.get(index);
             holder.amounts.put(slot, amount);
             inventory.setItem(slot, item(Material.EMERALD, "支付 " + MessageFormatter.money(amount),
-                    List.of("收款人：" + recipient.getName(), "点击提交中央清算")));
+                    List.of("收款人：" + recipient.getName(), "点击转账")));
         }
+        inventory.setItem(16, item(Material.NAME_TAG, "自定义金额",
+                List.of("点击后在聊天栏输入金额")));
         addNavigation(inventory);
         sender.openInventory(inventory);
     }
@@ -140,10 +147,10 @@ public final class BloecoMenu implements Listener {
 
     private void refreshTaxSlot(Player player, TaxHolder holder, int slot, TaxCategory category, String title) {
         economy.currentTaxRule(category).thenAccept(result -> runMain(() -> {
-            if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+            if (!isOpen(player, holder)) return;
             if (result.isSuccess()) {
                 holder.rates.put(category, result.value().basisPoints());
-                player.getOpenInventory().getTopInventory().setItem(slot, item(Material.PAPER, title,
+                holder.getInventory().setItem(slot, item(Material.PAPER, title,
                         List.of("当前：" + basisPoints(result.value().basisPoints()), "左键 +1%，右键 -1%")));
             }
         }));
@@ -167,7 +174,8 @@ public final class BloecoMenu implements Listener {
             if (recipient == null) player.sendMessage("该收款人已离线，请重新选择。");
             else openPayment(player, recipient);
         } else if (holder instanceof PaymentHolder payment) {
-            settlePayment(player, payment, slot);
+            if (slot == 16) beginAmountInput(player, AmountInput.payment(payment.recipientId));
+            else settlePayment(player, payment, slot);
         } else if (holder instanceof AdminHolder) {
             if (slot == 10 && roles.allows(player, RoleAccess.TAX)) openTaxes(player);
             else if (slot == 12 && roles.allows(player, RoleAccess.MONETARY))
@@ -191,14 +199,18 @@ public final class BloecoMenu implements Listener {
             Integer current = category == null ? null : taxes.rates.get(category);
             if (current != null) changeTax(player, category, current, event.getClick());
         } else if (holder instanceof BankHolder bank) {
-            if (slot == 10) openBankAmounts(player, BankAction.DEPOSIT, null, null);
+            if (slot == 4) openBankDetails(player);
+            else if (slot == 10) openBankAmounts(player, BankAction.DEPOSIT, null, null);
             else if (slot == 12) openBankAmounts(player, BankAction.WITHDRAW, null, null);
+            else if (slot == 14 && currentBankPolicy == null) player.sendMessage("贷款信息正在读取，请稍候。");
             else if (slot == 14) openBankAmounts(player, BankAction.BORROW, null, null);
             else if (slot == 16 && bank.nextLoanId == null) player.sendMessage("当前没有需要偿还的贷款。");
             else if (slot == 16) openBankAmounts(player, BankAction.REPAY, bank.nextLoanId, bank.nextLoanDue);
         } else if (holder instanceof BankAmountHolder amounts) {
             Money amount = amounts.amounts.get(slot);
-            if (amount != null) performBanking(player, amounts.action, amounts.loanId, amount);
+            if (slot == 18 && amounts.action != BankAction.REPAY) {
+                beginAmountInput(player, AmountInput.banking(amounts.action, amounts.loanId));
+            } else if (amount != null) performBanking(player, amounts.action, amounts.loanId, amount);
         } else if (holder instanceof BankAdminHolder admin && admin.policy != null
                 && (roles.allows(player, RoleAccess.BANKER) || roles.allows(player, RoleAccess.OPERATOR))) {
             changeBankPolicy(player, admin.policy, slot, event.getClick());
@@ -211,12 +223,13 @@ public final class BloecoMenu implements Listener {
         inventory.setItem(4, item(Material.CLOCK, "正在读取银行账户…", List.of()));
         inventory.setItem(10, item(Material.HOPPER, "存入银行", List.of("选择金额存入银行")));
         inventory.setItem(12, item(Material.DROPPER, "取出存款", List.of("选择金额返回钱包")));
-        inventory.setItem(14, item(Material.GOLD_INGOT, "申请贷款", List.of("固定利息，不创造新货币")));
+        inventory.setItem(14, item(Material.GOLD_INGOT, "申请贷款", loanSummaryLore(currentBankPolicy)));
         inventory.setItem(16, item(Material.PAPER, "偿还贷款", List.of("优先偿还最早到期贷款")));
+        inventory.setItem(18, item(Material.EXPERIENCE_BOTTLE, "信用等级", creditLore("正在读取")));
         addNavigation(inventory);
         player.openInventory(inventory);
         banking.playerSnapshot(player.getUniqueId()).thenAccept(result -> runMain(() -> {
-            if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+            if (!isOpen(player, holder)) return;
             if (!result.isSuccess()) {
                 inventory.setItem(4, item(Material.BARRIER, "银行不可用", List.of(MessageFormatter.error(result))));
                 return;
@@ -230,6 +243,47 @@ public final class BloecoMenu implements Listener {
                     "待还：" + MessageFormatter.money(snapshot.loanDebt()),
                     "信用等级：" + snapshot.creditGrade(),
                     snapshot.hasOverdueLoan() ? "状态：存在逾期" : "状态：正常")));
+            inventory.setItem(18, item(Material.EXPERIENCE_BOTTLE, "信用等级",
+                    creditLore(snapshot.creditGrade())));
+        }));
+        banking.bankSnapshot().thenAccept(result -> runMain(() -> {
+            if (!result.isSuccess() || !isOpen(player, holder)) return;
+            currentBankPolicy = result.value().policy();
+            inventory.setItem(14, item(Material.GOLD_INGOT, "申请贷款", loanSummaryLore(currentBankPolicy)));
+        }));
+    }
+
+    private void openBankDetails(Player player) {
+        BankDetailsHolder holder = new BankDetailsHolder(this);
+        Inventory inventory = inventory(holder, "Bloeco 银行账户详情");
+        inventory.setItem(13, item(Material.CLOCK, "正在读取账户详情…", List.of()));
+        addNavigation(inventory);
+        player.openInventory(inventory);
+        banking.playerSnapshot(player.getUniqueId()).thenAccept(result -> runMain(() -> {
+            if (!isOpen(player, holder)) return;
+            if (!result.isSuccess()) {
+                inventory.setItem(13, item(Material.BARRIER, "读取失败", List.of(MessageFormatter.error(result))));
+                return;
+            }
+            var snapshot = result.value();
+            inventory.setItem(10, item(Material.GOLD_INGOT, "钱包余额",
+                    List.of(MessageFormatter.money(snapshot.wallet()))));
+            inventory.setItem(12, item(Material.IRON_INGOT, "银行存款",
+                    List.of(MessageFormatter.money(snapshot.deposit()))));
+            inventory.setItem(14, item(Material.PAPER, "贷款余额", List.of(
+                    "全部待还：" + MessageFormatter.money(snapshot.loanDebt()),
+                    "下一笔应还：" + MessageFormatter.money(snapshot.nextLoanDue()),
+                    snapshot.hasOverdueLoan() ? "状态：存在逾期" : "状态：正常")));
+            inventory.setItem(16, item(Material.EXPERIENCE_BOTTLE, "信用等级",
+                    creditLore(snapshot.creditGrade())));
+        }));
+        banking.bankSnapshot().thenAccept(result -> runMain(() -> {
+            if (!result.isSuccess() || !isOpen(player, holder)) return;
+            currentBankPolicy = result.value().policy();
+            inventory.setItem(18, item(Material.BOOK, "当前银行利率", List.of(
+                    "存款年利率：" + basisPoints(currentBankPolicy.depositRateBasisPoints()),
+                    "贷款年化利率：" + basisPoints(currentBankPolicy.loanRateBasisPoints()),
+                    "贷款期限：" + currentBankPolicy.loanTermDays() + " 天")));
         }));
     }
 
@@ -240,13 +294,18 @@ public final class BloecoMenu implements Listener {
             int slot = 10 + index * 2;
             Money amount = AMOUNTS.get(index);
             holder.amounts.put(slot, amount);
-            inventory.setItem(slot, item(action.material, action.title + " " + MessageFormatter.money(amount),
-                    List.of("点击提交，所有资金进入中央总账")));
+            List<String> lore = action == BankAction.BORROW
+                    ? loanQuoteLore(currentBankPolicy, amount)
+                    : List.of("点击提交");
+            inventory.setItem(slot, item(action.material, action.title + " " + MessageFormatter.money(amount), lore));
         }
         if (action == BankAction.REPAY && exactDue != null) {
             holder.amounts.put(16, exactDue);
             inventory.setItem(16, item(Material.NETHER_STAR, "全部偿还 " + MessageFormatter.money(exactDue),
                     List.of("精确结清最早到期贷款")));
+        }
+        if (action != BankAction.REPAY) {
+            inventory.setItem(18, item(Material.NAME_TAG, "自定义金额", List.of("点击后在聊天栏输入金额")));
         }
         addNavigation(inventory);
         player.openInventory(inventory);
@@ -261,7 +320,7 @@ public final class BloecoMenu implements Listener {
             case REPAY -> banking.repay(player.getUniqueId(), loanId, amount, key);
         };
         player.closeInventory();
-        player.sendMessage("银行请求已提交，正在记入中央总账。");
+        player.sendMessage("银行请求已提交，请稍候。");
         stage.thenAccept(result -> runMain(() -> {
             player.sendMessage(result.isSuccess() ? action.title + "完成。" : MessageFormatter.error(result));
             openBank(player);
@@ -275,20 +334,21 @@ public final class BloecoMenu implements Listener {
         addNavigation(inventory);
         player.openInventory(inventory);
         banking.bankSnapshot().thenAccept(result -> runMain(() -> {
-            if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+            if (!isOpen(player, holder)) return;
             if (!result.isSuccess()) {
                 inventory.setItem(4, item(Material.BARRIER, "银行不可用", List.of(MessageFormatter.error(result))));
                 return;
             }
             var snapshot = result.value();
             holder.policy = snapshot.policy();
+            currentBankPolicy = snapshot.policy();
             inventory.setItem(4, item(Material.IRON_BLOCK, "银行资产负债表", List.of(
                     "现金：" + MessageFormatter.money(snapshot.cash()),
                     "存款负债：" + MessageFormatter.money(snapshot.depositLiabilities()),
                     "贷款资产：" + MessageFormatter.money(snapshot.loanAssets()),
                     "贷款数：" + snapshot.activeLoans() + "，逾期：" + snapshot.overdueLoans())));
             inventory.setItem(10, policyItem("存款年利率", snapshot.policy().depositRateBasisPoints()));
-            inventory.setItem(12, policyItem("贷款固定利率", snapshot.policy().loanRateBasisPoints()));
+            inventory.setItem(12, policyItem("贷款年化利率", snapshot.policy().loanRateBasisPoints()));
             inventory.setItem(14, policyItem("最低准备金率", snapshot.policy().reserveRatioBasisPoints()));
             inventory.setItem(16, item(snapshot.policy().lendingEnabled() ? Material.LIME_WOOL : Material.RED_WOOL,
                     snapshot.policy().lendingEnabled() ? "放贷：已开启" : "放贷：已暂停", List.of("点击切换")));
@@ -332,6 +392,7 @@ public final class BloecoMenu implements Listener {
         }
         if (next == null) return;
         banking.updatePolicy(next, "player:" + player.getUniqueId()).thenAccept(result -> runMain(() -> {
+            if (result.isSuccess()) currentBankPolicy = result.value();
             player.sendMessage(result.isSuccess() ? "银行政策已更新。" : MessageFormatter.error(result));
             openBankAdministration(player);
         }));
@@ -339,16 +400,45 @@ public final class BloecoMenu implements Listener {
 
     private static int clampRate(int value) { return Math.max(0, Math.min(10_000, value)); }
 
+    private void refreshCachedBankPolicy() {
+        banking.bankSnapshot().thenAccept(result -> {
+            if (result.isSuccess()) currentBankPolicy = result.value().policy();
+        });
+    }
+
+    private static List<String> loanSummaryLore(BankingPolicy policy) {
+        if (policy == null) return List.of("贷款利率正在读取…");
+        return List.of("贷款年化利率：" + basisPoints(policy.loanRateBasisPoints()),
+                "默认期限：" + policy.loanTermDays() + " 天", "利息按实际贷款期限计算");
+    }
+
+    private static List<String> loanQuoteLore(BankingPolicy policy, Money principal) {
+        if (policy == null) return List.of("贷款利率正在读取…", "请返回后重试");
+        return List.of("年化利率：" + basisPoints(policy.loanRateBasisPoints()),
+                "期限：" + policy.loanTermDays() + " 天",
+                "预计利息：" + MessageFormatter.money(policy.quotedInterest(principal)),
+                "预计应还：" + MessageFormatter.money(policy.quotedTotalDue(principal)),
+                "点击提交");
+    }
+
+    private static List<String> creditLore(String currentGrade) {
+        return List.of("当前等级：" + currentGrade,
+                "A级：无未结清贷款",
+                "B级：正常还款中",
+                "C级：贷款余额达到额度的 80%",
+                "D级：存在逾期贷款");
+    }
+
     private void openJournal(Player player) {
         JournalHolder holder = new JournalHolder(this);
         Inventory inventory = inventory(holder, "Bloeco 我的账单");
-        inventory.setItem(13, item(Material.CLOCK, "正在读取中央账本…", List.of()));
+        inventory.setItem(13, item(Material.CLOCK, "正在读取账单…", List.of()));
         addNavigation(inventory);
         player.openInventory(inventory);
         var playerAccount = com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId());
         economy.recentJournal(playerAccount, 21)
                 .thenAccept(result -> runMain(() -> {
-                    if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+                    if (!isOpen(player, holder)) return;
                     inventory.clear();
                     addNavigation(inventory);
                     if (!result.isSuccess()) {
@@ -375,7 +465,7 @@ public final class BloecoMenu implements Listener {
         addNavigation(inventory);
         player.openInventory(inventory);
         economy.snapshot().thenAccept(result -> runMain(() -> {
-            if (player.getOpenInventory().getTopInventory().getHolder() != holder) return;
+            if (!isOpen(player, holder)) return;
             inventory.clear();
             addNavigation(inventory);
             if (!result.isSuccess()) {
@@ -406,10 +496,76 @@ public final class BloecoMenu implements Listener {
         }
     }
 
+    @EventHandler
+    public void onAmountInput(AsyncChatEvent event) {
+        Player player = event.getPlayer();
+        AmountInput input = amountInputs.remove(player.getUniqueId());
+        if (input == null) return;
+        event.setCancelled(true);
+        String text = PlainTextComponentSerializer.plainText().serialize(event.message()).trim();
+        runMain(() -> completeAmountInput(player, input, text));
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        amountInputs.remove(event.getPlayer().getUniqueId());
+    }
+
+    private void beginAmountInput(Player player, AmountInput input) {
+        amountInputs.put(player.getUniqueId(), input);
+        player.closeInventory();
+        player.sendMessage("请在聊天栏输入金额，输入“取消”可返回。有效期 60 秒。");
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            if (amountInputs.remove(player.getUniqueId(), input)) {
+                player.sendMessage("输入已超时，请重新操作。");
+            }
+        }, 1_200L);
+    }
+
+    private void completeAmountInput(Player player, AmountInput input, String text) {
+        if ("取消".equalsIgnoreCase(text) || "cancel".equalsIgnoreCase(text)) {
+            reopenAmountInputParent(player, input);
+            return;
+        }
+        final Money amount;
+        try {
+            amount = Money.parse(text);
+            if (amount.minor() <= 0) throw new IllegalArgumentException("non-positive amount");
+        } catch (RuntimeException exception) {
+            player.sendMessage("金额格式不正确，请输入大于零且最多两位小数的金额。");
+            beginAmountInput(player, input.renewed());
+            return;
+        }
+        if (input.kind == InputKind.PAYMENT) {
+            settlePayment(player, input.recipientId, amount);
+        } else {
+            performBanking(player, input.bankAction, input.loanId, amount);
+        }
+    }
+
+    private void reopenAmountInputParent(Player player, AmountInput input) {
+        if (input.kind == InputKind.PAYMENT) {
+            Player recipient = Bukkit.getPlayer(input.recipientId);
+            if (recipient == null) {
+                player.sendMessage("收款玩家已离线。");
+                openRecipients(player);
+            } else openPayment(player, recipient);
+        } else openBank(player);
+    }
+
     private void settlePayment(Player sender, PaymentHolder holder, int slot) {
         Money amount = holder.amounts.get(slot);
-        Player recipient = Bukkit.getPlayer(holder.recipientId);
-        if (amount == null || recipient == null) return;
+        if (amount == null) return;
+        settlePayment(sender, holder.recipientId, amount);
+    }
+
+    private void settlePayment(Player sender, UUID recipientId, Money amount) {
+        Player recipient = Bukkit.getPlayer(recipientId);
+        if (recipient == null) {
+            sender.sendMessage("收款玩家已离线。");
+            openRecipients(sender);
+            return;
+        }
         String key = "gui:" + UUID.randomUUID();
         economy.pay(new PlayerPayment(sender.getUniqueId(), recipient.getUniqueId(), amount,
                 JournalMemos.playerPayment(sender.getName(), recipient.getName()), key))
@@ -422,7 +578,7 @@ public final class BloecoMenu implements Listener {
                     open(sender);
                 }));
         sender.closeInventory();
-        sender.sendMessage("转账请求已提交，正在由 Bloeco 清算。");
+        sender.sendMessage("转账请求已提交，请稍候。");
     }
 
     private void openConfirmation(Player player, AdminAction action, Money amount) {
@@ -492,6 +648,11 @@ public final class BloecoMenu implements Listener {
         if (plugin.isEnabled()) Bukkit.getScheduler().runTask(plugin, action);
     }
 
+    private static boolean isOpen(Player player, Holder holder) {
+        Inventory top = player.getOpenInventory().getTopInventory();
+        return top != null && top.getHolder() == holder;
+    }
+
     private boolean handleNavigation(Player player, Holder holder, int slot) {
         if (holder instanceof HubHolder) {
             if (slot == 22) {
@@ -509,6 +670,8 @@ public final class BloecoMenu implements Listener {
         else if (holder instanceof ConfirmHolder confirmation) {
             openAmountSelection(player, confirmation.action);
         } else if (holder instanceof BankAmountHolder) {
+            openBank(player);
+        } else if (holder instanceof BankDetailsHolder) {
             openBank(player);
         } else if (holder instanceof BankHolder) {
             open(player);
@@ -561,6 +724,9 @@ public final class BloecoMenu implements Listener {
         private UUID nextLoanId;
         private Money nextLoanDue;
         private BankHolder(BloecoMenu menu) { super(menu); }
+    }
+    private static final class BankDetailsHolder extends Holder {
+        private BankDetailsHolder(BloecoMenu menu) { super(menu); }
     }
     private static final class BankAdminHolder extends Holder {
         private BankingPolicy policy;
@@ -623,5 +789,20 @@ public final class BloecoMenu implements Listener {
         private final String title;
         private final Material material;
         BankAction(String title, Material material) { this.title = title; this.material = material; }
+    }
+    private enum InputKind { PAYMENT, BANKING }
+    private record AmountInput(UUID promptId, InputKind kind, UUID recipientId,
+                               BankAction bankAction, UUID loanId) {
+        private static AmountInput payment(UUID recipientId) {
+            return new AmountInput(UUID.randomUUID(), InputKind.PAYMENT, recipientId, null, null);
+        }
+
+        private static AmountInput banking(BankAction action, UUID loanId) {
+            return new AmountInput(UUID.randomUUID(), InputKind.BANKING, null, action, loanId);
+        }
+
+        private AmountInput renewed() {
+            return new AmountInput(UUID.randomUUID(), kind, recipientId, bankAction, loanId);
+        }
     }
 }

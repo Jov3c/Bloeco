@@ -14,7 +14,7 @@ bootstrap:
 bank:
   initial-capital: "250000.00"
   deposit-rate-bps: 100
-  loan-rate-bps: 500
+  loan-rate-bps: 320
   reserve-ratio-bps: 2000
   maximum-loan: "10000.00"
   lending-enabled: true

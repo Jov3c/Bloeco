@@ -29,27 +29,27 @@ class SqliteBankingStoreTest {
                     .toCompletableFuture().join();
         }
 
-        BankingPolicy policy = new BankingPolicy(100, 500, 2_000, Money.parse("10000.00"), true, 7);
+        BankingPolicy policy = new BankingPolicy(100, 320, 2_000, Money.parse("10000.00"), true, 7);
         try (SqliteBankingStore bank = new SqliteBankingStore(database, clock)) {
             bank.initialize(Money.parse("250000.00"), policy);
             var deposit = bank.deposit(player, Money.parse("50.00"), "deposit-1");
             var replay = bank.deposit(player, Money.parse("50.00"), "deposit-1");
             assertEquals(deposit.journalId(), replay.journalId());
 
-            var loan = bank.borrow(player, Money.parse("10.00"), "loan-1");
-            var loanReplay = bank.borrow(player, Money.parse("10.00"), "loan-1");
+            var loan = bank.borrow(player, Money.parse("100.00"), "loan-1");
+            var loanReplay = bank.borrow(player, Money.parse("100.00"), "loan-1");
             assertEquals(loan.loanId(), loanReplay.loanId());
-            assertEquals(Money.parse("10.50"), loan.totalDue());
-            bank.repay(player, loan.loanId(), Money.parse("10.50"), "repay-1");
+            assertEquals(Money.parse("100.06"), loan.totalDue());
+            bank.repay(player, loan.loanId(), Money.parse("100.06"), "repay-1");
 
             var playerView = bank.playerSnapshot(player);
-            assertEquals(Money.parse("49.50"), playerView.wallet());
+            assertEquals(Money.parse("49.94"), playerView.wallet());
             assertEquals(Money.parse("50.00"), playerView.deposit());
             assertEquals(Money.ofMinor(0), playerView.loanDebt());
             assertFalse(playerView.hasOverdueLoan());
 
             var bankView = bank.bankSnapshot();
-            assertEquals(Money.parse("250050.50"), bankView.cash());
+            assertEquals(Money.parse("250050.06"), bankView.cash());
             assertEquals(Money.parse("50.00"), bankView.depositLiabilities());
             assertEquals(Money.ofMinor(0), bankView.loanAssets());
         }
@@ -73,7 +73,7 @@ class SqliteBankingStoreTest {
             economy.adjustPlayerBalance(player, Money.parse("20000"), "test", "利息测试资金", "interest-fund")
                     .toCompletableFuture().join();
         }
-        BankingPolicy policy = new BankingPolicy(100, 500, 2000, Money.parse("10000"), true, 7);
+        BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
         try (SqliteBankingStore bank = new SqliteBankingStore(database, openingClock)) {
             bank.initialize(Money.parse("250000"), policy);
             bank.deposit(player, Money.parse("10000"), "interest-deposit");

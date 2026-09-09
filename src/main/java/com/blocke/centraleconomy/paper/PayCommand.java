@@ -71,7 +71,7 @@ public final class PayCommand implements CommandExecutor, TabCompleter {
             recipient.sendMessage("收到来自 " + payer.getName() + " 的 "
                     + MessageFormatter.money(receipt.recipientNet()) + "。");
         }));
-        payer.sendMessage("转账请求已提交，正在由 Bloeco 清算。");
+        payer.sendMessage("转账请求已提交，请稍候。");
         return true;
     }
 
