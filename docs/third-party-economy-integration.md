@@ -110,6 +110,8 @@ CREATED → VALIDATED → SETTLEMENT_PENDING → PAID → DELIVERED
 
 Bloeco 的初始国库供给只在空白总账创建一次。玩家启动资金由国库划拨且每个 UUID 只能领取一次。接入插件不得把重装、重连、余额为零或订单失败当作重新发放启动资金的条件。
 
+Bloeco 内置的国有银行属于中央经济系统内部模块。当前第三方 API 不开放替玩家存款、取款、贷款或还款的能力；业务插件不得写入 `banks`、`bank_deposits`、`bank_loans`、`bank_loan_payments` 或 `bank_operations`，也不得把银行存款余额复制成自己的可消费货币。未来若发布银行 API，仍必须遵守版本化能力授权、幂等键和资金守恒规则。
+
 退款应引用原结算凭证。税款是否退还、手续费是否退还由原政策版本决定，不能由商店随意选择当前税率重新计算。
 
 ## 7. MySQL 与 Redis 兼容要求

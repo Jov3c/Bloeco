@@ -1,6 +1,6 @@
 # Bloeco 银行基础架构设计
 
-状态：已确认，作为 Bloeco 1.3 实现基线
+状态：Bloeco 1.3 已实现基线（源码版本；是否发布 Release 由发布流程另行决定）
 适用版本：Bloeco 1.3 及后续版本  
 平台：Paper 1.21.11、Java 21、MySQL 8.4、Redis 7+
 
@@ -19,6 +19,7 @@ Bloeco 1.3 包含：
 - 真实资金贷款、部分/全部还款、年化固定利率按实际期限计息、到期与逾期状态。
 - 信用等级、准备金率、贷款开关和银行管理员 GUI。
 - 幂等银行结算、政策审计、MySQL Outbox 和崩溃恢复。
+- `/eco` 玩家银行、账户详情、A–D 信用说明、聊天自定义金额和权限化银行管理 GUI。
 
 第一版不包含：
 
@@ -153,6 +154,14 @@ reserved_minor = 所有 ACTIVE reservation 的金额合计
 
 应计存款利息先增加银行负债，实际支付时才从银行现金转入玩家钱包。应计贷款利息先增加贷款应收，玩家还款时才发生资金转移。
 
+当前贷款合同默认采用 3.2% 年化固定利率和 7 天期限。贷款利息按以下整数公式计算，并在正数计息贷款上保证最低一个最小货币单位：
+
+```text
+interestMinor = max(1, principalMinor * annualBasisPoints * termDays / 3,650,000)
+```
+
+GUI 在预设金额按钮上同时显示年化利率、期限、预计利息和预计应还金额。每笔贷款保存发放时的利率；管理员修改银行政策只影响后续新贷款。
+
 坏账核销减少贷款应收并冲减银行权益或坏账准备，不产生退款、不补充银行现金，也不改变货币供应。财政注资必须是 Treasury 到 `bank:cash` 的真实划拨并接受审计。
 
 ## 7. 货币统计口径
@@ -169,15 +178,14 @@ reserved_minor = 所有 ACTIVE reservation 的金额合计
 
 ## 8. 银行政策与风险限制
 
-第一版贷款额度取以下上限的最小值：
+Bloeco 1.3 的贷款额度取以下上限的最小值：
 
 ```text
-信用等级上限
-近 30 日确认收入上限
-净资产负债率上限
 银行可贷现金上限
-单玩家和全行风险敞口上限
+单玩家贷款上限
 ```
+
+当前信用等级是玩家提示与后续风控扩展的基础：A 为无未结清贷款，B 为正常还款中且低于额度 80%，C 为贷款余额达到单人额度 80%，D 为存在逾期贷款。近 30 日收入、净资产负债率和抵押物估值尚未进入当前授信计算，不得在 GUI 或 API 中宣称已经启用。
 
 准备金约束：
 
@@ -191,28 +199,23 @@ bank:cash >= withdrawableDeposits * reserveRatio
 
 ## 9. 数据库表
 
-在现有 V2 Schema 上增加：
+Bloeco 1.3 已实现的银行表：
 
 ```text
 banks
 bank_deposits
 bank_loans
 bank_loan_payments
-bank_interest_accruals
-bank_credit_profiles
-bank_risk_snapshots
-liabilities
-liability_events
-integrity_reports
+bank_operations
 ```
 
-所有金额使用 `BIGINT` 最小货币单位，利率使用整数基点。所有业务表包含状态、创建时间、更新时间和版本。贷款放款、还款等资金操作保存对应的永久 `journal_id` 和稳定业务引用。
+所有金额使用 `BIGINT` 最小货币单位，利率使用整数基点。银行、存款和贷款保存状态与时间字段；`bank_operations.idempotency_key` 唯一约束防止重复执行。贷款放款、还款等资金操作保存对应的永久 `journal_id`。
 
 迁移采用递增版本、只前进、可重复执行的显式 Migration。启动时先完成结构迁移，再开放 API 和 GUI。迁移失败时插件拒绝写入，不能自动回退 SQLite。
 
 ## 10. Native API
 
-银行功能开始前先发布独立的版本化 API artifact，并通过 Paper `ServicesManager` 注册：
+当前银行能力只由 Bloeco 内部的异步 `AsyncBankingFacade` 和 `/eco` GUI 使用，不对第三方插件开放。未来发布独立、版本化的 API artifact 后，再通过 Paper `ServicesManager` 注册以下边界：
 
 ```text
 BloecoApi
@@ -233,19 +236,13 @@ MySQL 始终是唯一权威。Redis 仅保存可重建余额、银行概览、�
 
 Outbox 与业务事务一起写入 MySQL。Publisher 对 Redis Stream 提供至少一次投递，消费者必须按 `event_id` 去重。Publisher 的失败次数、最后错误和积压量需要可观测，不能静默吞掉异常。
 
-第一版事件包括：
+当前 MySQL Outbox 对全部资金业务统一发布：
 
 ```text
-BALANCE_CHANGED
-RESERVATION_CHANGED
-SETTLEMENT_COMMITTED
-BANK_DEPOSIT_CHANGED
-LOAN_CREATED
-LOAN_REPAID
-LOAN_OVERDUE
-LOAN_DEFAULTED
-INTEGRITY_ALERT
+JOURNAL_COMMITTED
 ```
+
+事件载荷包含永久 `journal_id` 和 `JournalType`，银行业务可由 `BANK_CAPITAL_INJECTION`、`BANK_DEPOSIT`、`BANK_WITHDRAWAL`、`LOAN_DISBURSEMENT`、`LOAN_REPAYMENT` 区分。更细的业务事件尚未成为对外兼容合同。
 
 ## 12. GUI
 
@@ -254,34 +251,30 @@ INTEGRITY_ALERT
 ```text
 /eco
 └── Bloeco 经济中心
-    ├── 银行
-    │   ├── 我的存款
-    │   ├── 存入
-    │   ├── 取出
-    │   ├── 我的贷款
+    ├── 国有银行
+    │   ├── 我的银行账户（钱包、存款、贷款、利率）
+    │   ├── 存入银行
+    │   ├── 取出存款
     │   ├── 申请贷款
-    │   ├── 提前还款
-    │   ├── 信用信息
-    │   └── 银行公告
-    └── 管理员中心
+    │   ├── 偿还贷款
+    │   └── 信用等级（A–D 评级标准）
+    └── 中央银行管理
         └── 银行管理
             ├── 银行资产负债表
             ├── 存款利率
-            ├── 贷款基准利率
+            ├── 贷款年化利率
             ├── 准备金率
             ├── 放贷开关
-            ├── 流动性与风险指标
-            ├── 逾期与坏账
-            └── 银行审计
+            └── 单人贷款上限
 ```
 
 “银行”对普通玩家开放；“管理员中心”和“银行管理”仅向具有相应权限的玩家显示。银行经营权限使用 `bloeco.role.banker`，审计入口使用 `bloeco.role.auditor`。控制台不承载银行日常操作。
 
 所有银行子页面固定提供“返回上一级”和“主菜单”；关闭按钮只关闭界面，不能代替导航按钮。
 
-玩家银行页面包括：账户详情、存入、取出、贷款、还款、信用信息和银行公告。转账、存款、取款和贷款支持 100/1000/10000 预设金额与聊天栏自定义金额；自定义输入最多两位小数、60 秒超时，并支持输入“取消”返回。信用等级独立展示 A–D 评级标准。银行管理员页面包括：利率、准备金率、放贷开关、流动性、逾期贷款、坏账和审计入口。
+玩家银行页面包括：账户详情、存入、取出、贷款、还款和信用信息。转账、存款、取款和贷款支持 100/1000/10000 预设金额与聊天栏自定义金额；自定义输入最多两位小数、60 秒超时，并支持输入“取消”返回。信用等级独立展示 A–D 评级标准。银行管理员页面包括：资产负债表、存款利率、贷款年化利率、准备金率、单人贷款上限和放贷开关。
 
-金额输入优先使用 GUI 预设与聊天输入会话；聊天输入必须有超时、取消和二次确认。余额、利率和额度展示是读取快照，最终结果以提交回执为准。
+金额输入优先使用 GUI 预设与聊天输入会话；聊天输入必须有超时和取消。余额、利率和额度展示是读取快照，最终结果以提交回执为准。
 
 ## 13. 完整性与失败保护
 
@@ -315,27 +308,27 @@ reserved_minor = ACTIVE fund_reservations 合计
 
 ## 15. 实施阶段
 
-### Phase A：事务内核
+### Phase A：事务内核（已完成当前实现）
 
 引入 `MySqlTransactionManager`，按事务获取连接；拆分核心 Repository；保持现有余额、支付、税收、发行和 GUI 行为不变。
 
-### Phase B：机构结算
+### Phase B：机构结算（待独立 API 版本）
 
 落地 Institution、Reservation、Settlement、幂等查询和第一版 Native API。
 
-### Phase C：存款银行
+### Phase C：存款银行（已完成）
 
 建立国有银行、真实资本注入、存款和取款，并增加基础货币与广义玩家货币统计。
 
-### Phase D：贷款与负债
+### Phase D：贷款与负债（贷款、还款和逾期识别已完成）
 
-增加信用档案、贷款、还款、固定利息、逾期、违约、核销和最小 Liability Registry。
+增加信用等级、贷款、还款、年化固定利率和逾期识别。自动违约、坏账核销和统一 Liability Registry 留待后续版本。
 
-### Phase E：经济中心 GUI
+### Phase E：经济中心 GUI（已完成当前功能）
 
 扩展 `/eco`，增加玩家银行和银行管理员界面。
 
-### Phase F：资产扩展
+### Phase F：资产扩展（未开始）
 
 银行稳定后再设计 Asset Provider、净资产读模型和抵押系统；不与第一版银行并行开发。
 
@@ -343,4 +336,4 @@ reserved_minor = ACTIVE fund_reservations 合计
 
 Phase A 和 Phase B 属于兼容性重构，不修改现有货币或玩家余额。每个数据库版本都必须先在复制数据上完成迁移、完整性校验和回滚演练。
 
-银行功能通过配置开关分阶段启用。代码存在不代表自动开业；只有数据库迁移、初始资本真实划拨、完整性检查和管理员确认全部成功后，银行 GUI 才开放写操作。
+银行首次初始化只有在数据库迁移、初始资本真实划拨和完整性检查成功后才开放 GUI 写操作；任一步失败均保持不可用或只读，不得用 SQLite、Redis 或新增发行作为兜底。

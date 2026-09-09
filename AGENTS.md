@@ -65,6 +65,10 @@ Do not add public administration subcommands. Add administration flows to the pe
 
 Player banking is under `/eco -> 国有银行`; bank policy is under `/eco -> 中央银行管理 -> 银行管理`. The banker permission is `bloeco.role.banker` and does not imply monetary or tax authority. Banking tables are owned exclusively by Bloeco. External plugins must not create deposits or loans by writing those tables.
 
+The bank home screen must keep `我的银行账户` clickable, expose a separate `信用等级` item with the A-D criteria in its lore, and show the current annual loan rate before a player borrows. Transfer, deposit, withdrawal, and loan amount screens provide the `100.00`, `1000.00`, and `10000.00` presets plus a custom-amount button. Custom amounts are entered through a cancelled `AsyncChatEvent`, accept at most two decimal places, support `取消`/`cancel`, and expire after 60 seconds. Never expose internal phrases such as “中央总账”, “中央清算”, or “由 Bloeco 结算” in ordinary player status messages; those terms are reserved for permission-gated audit views and technical documentation.
+
+The default loan contract is a 3.2% annual fixed rate (`320` basis points) for 7 days. Interest is `principal * annualBasisPoints * termDays / 3,650,000` in minor units, rounded down with a minimum of one minor unit for a positive interest-bearing loan. Persist the contracted rate on each loan so later policy changes do not rewrite existing debt.
+
 ## Third-party integration
 
 The public native API is versioned separately from the internal store. Until a compatible API artifact is published, another plugin must not read Bloeco MySQL/SQLite tables, invoke internal classes by reflection, or use Redis as a substitute. See `docs/architecture/storage-v2-mysql-redis.md` and `docs/third-party-economy-integration.md`.
