@@ -13,8 +13,10 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,13 +40,21 @@ public final class AsyncBankingFacade implements AutoCloseable {
         Objects.requireNonNull(economyReady, "economyReady");
         Objects.requireNonNull(initialCapital, "initialCapital");
         Objects.requireNonNull(policy, "policy");
-        executor = Executors.newSingleThreadExecutor(task -> {
+        executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(256), task -> {
             Thread thread = new Thread(task, "Bloeco-Banking-1");
             thread.setDaemon(true);
             worker.set(thread);
             return thread;
-        });
-        economyReady.whenComplete((result, failure) -> executor.execute(() -> {
+        }, new ThreadPoolExecutor.AbortPolicy());
+        economyReady.whenComplete((result, failure) -> submitInitialization(result, failure, storeFactory, initialCapital, policy));
+    }
+
+    private void submitInitialization(Result<Void> result, Throwable failure,
+                                      Supplier<? extends BankingStore> storeFactory,
+                                      Money initialCapital, BankingPolicy policy) {
+        try {
+            executor.execute(() -> {
             if (failure != null || result == null || !result.isSuccess()) {
                 ready.complete(unavailable());
                 return;
@@ -57,7 +67,10 @@ public final class AsyncBankingFacade implements AutoCloseable {
             } catch (RuntimeException exception) {
                 ready.complete(unavailable());
             }
-        }));
+            });
+        } catch (RejectedExecutionException exception) {
+            ready.complete(unavailable());
+        }
     }
 
     public CompletionStage<Result<Void>> readyStage() { return ready; }
@@ -102,22 +115,26 @@ public final class AsyncBankingFacade implements AutoCloseable {
     private <T> CompletionStage<Result<T>> submit(Function<BankingStore, T> operation) {
         if (!accepting.get()) return CompletableFuture.completedFuture(unavailable());
         CompletableFuture<Result<T>> result = new CompletableFuture<>();
-        executor.execute(() -> {
-            BankingStore current = store;
-            if (current == null) {
-                result.complete(unavailable());
-                return;
-            }
-            try {
-                result.complete(Result.success(operation.apply(current)));
-            } catch (LedgerException exception) {
-                result.complete(Result.failure(map(exception.code()), exception.getMessage()));
-            } catch (IllegalArgumentException exception) {
-                result.complete(Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage()));
-            } catch (RuntimeException exception) {
-                result.complete(Result.failure(ErrorCode.INTERNAL_ERROR, "银行操作失败。"));
-            }
-        });
+        try {
+            executor.execute(() -> {
+                BankingStore current = store;
+                if (current == null) {
+                    result.complete(unavailable());
+                    return;
+                }
+                try {
+                    result.complete(Result.success(operation.apply(current)));
+                } catch (LedgerException exception) {
+                    result.complete(Result.failure(map(exception.code()), exception.getMessage()));
+                } catch (IllegalArgumentException exception) {
+                    result.complete(Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage()));
+                } catch (RuntimeException exception) {
+                    result.complete(Result.failure(ErrorCode.INTERNAL_ERROR, "银行操作失败。"));
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            result.complete(unavailable());
+        }
         return result;
     }
 
@@ -135,14 +152,19 @@ public final class AsyncBankingFacade implements AutoCloseable {
             return;
         }
         CompletableFuture<Void> closed = new CompletableFuture<>();
-        executor.execute(() -> {
-            try {
-                closeStore.run();
-                closed.complete(null);
-            } catch (RuntimeException exception) {
-                closed.completeExceptionally(exception);
-            }
-        });
+        try {
+            executor.execute(() -> {
+                try {
+                    closeStore.run();
+                    closed.complete(null);
+                } catch (RuntimeException exception) {
+                    closed.completeExceptionally(exception);
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            closeStore.run();
+            closed.complete(null);
+        }
         executor.shutdown();
         try {
             closed.get(30, TimeUnit.SECONDS);

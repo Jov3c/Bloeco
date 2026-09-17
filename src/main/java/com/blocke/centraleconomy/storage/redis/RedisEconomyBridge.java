@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Optional Redis accelerator for Bloeco. It never owns balances or decides whether a journal commits.
@@ -22,6 +23,8 @@ public final class RedisEconomyBridge implements AutoCloseable {
     private final String stream;
     private final Duration cacheTtl;
     private final AtomicBoolean available = new AtomicBoolean(true);
+    private final AtomicLong failureCount = new AtomicLong();
+    private final AtomicLong lastFailureEpochMs = new AtomicLong();
 
     private RedisEconomyBridge(RedisClient client,
                                StatefulRedisConnection<String, String> connection,
@@ -54,12 +57,20 @@ public final class RedisEconomyBridge implements AutoCloseable {
         return available.get();
     }
 
+    public long failureCount() {
+        return failureCount.get();
+    }
+
+    public long lastFailureEpochMs() {
+        return lastFailureEpochMs.get();
+    }
+
     public void cache(String key, String value) {
         if (!available.get()) return;
         try {
             commands.setex(prefix + key, cacheTtl.toSeconds(), value);
         } catch (RuntimeException exception) {
-            available.set(false);
+            markUnavailable();
         }
     }
 
@@ -68,7 +79,7 @@ public final class RedisEconomyBridge implements AutoCloseable {
         try {
             return commands.get(prefix + key);
         } catch (RuntimeException exception) {
-            available.set(false);
+            markUnavailable();
             return null;
         }
     }
@@ -84,8 +95,14 @@ public final class RedisEconomyBridge implements AutoCloseable {
                     "payload", payload == null ? "{}" : payload,
                     "created_at", Long.toString(createdAtEpochMs)));
         } catch (RuntimeException exception) {
-            available.set(false);
+            markUnavailable();
         }
+    }
+
+    private void markUnavailable() {
+        available.set(false);
+        failureCount.incrementAndGet();
+        lastFailureEpochMs.set(System.currentTimeMillis());
     }
 
     @Override

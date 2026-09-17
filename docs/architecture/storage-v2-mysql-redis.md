@@ -57,6 +57,9 @@
 - Stream 默认 `bloeco:v2:ledger-events`；事件载荷包含 `event_id`、`journal_id`、`scope_key`、`created_at` 和 schema 版本。
 - 缓存失效优先于更新；任何缓存命中都必须能够从 MySQL 重新构建。
 - Redis 连接失败只记录健康状态并继续保证 MySQL 账本；发布器恢复后从 `outbox_events` 的未发布位置继续。
+- Redis bridge 将缓存/Stream 异常降级为不可用状态，并记录故障次数和最近故障时间；这类异常不会向玩家转账或银行事务抛出，也不会标记 outbox 事件为已发布。后台发布失败日志限频，避免 Redis 故障时刷屏。
+- MySQL 连接池设置 5 秒获取超时、2 秒验证超时、30 分钟最大生命周期和 2 分钟保活；SQLite 使用 WAL、`foreign_keys=ON`、5 秒 `busy_timeout`、`synchronous=FULL` 与 `temp_store=MEMORY`。
+- schema 版本 5（SQLite 版本 4）为账单时间、账单类型、分录账户、税则生效期、审计时间和银行还款时间建立索引；索引迁移可重复执行。
 
 ## 6. 配置基线
 
@@ -85,6 +88,8 @@ bank:
 ```
 
 SQLite 仅用于开发、离线测试和迁移工具，必须显式设置 `storage.type: sqlite`。生产环境禁止把 SQLite 当作 MySQL 故障转移目标。
+
+配置校验会在创建数据库连接前拒绝未知存储类型、缺少 MySQL 地址/用户、非法 Redis TTL、非正初始资金、非法贷款上限和超出 0–10000 的基点。Redis 可以通过 `redis.enabled: false` 关闭；关闭后不影响 MySQL 核心账本。
 
 ## 7. 插件接入契约
 

@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates and upgrades the authoritative MySQL/InnoDB ledger schema. */
 final class MySqlSchema {
-    static final int VERSION = 4;
+    static final int VERSION = 5;
 
     private MySqlSchema() {}
 
@@ -310,8 +310,23 @@ final class MySqlSchema {
                         CONSTRAINT fk_operation_journal FOREIGN KEY (journal_id) REFERENCES journal_entries(entry_id)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                     """);
+            createIndexIfMissing(statement, "CREATE INDEX ix_postings_account_entry ON postings(account_id, entry_id)");
+            createIndexIfMissing(statement, "CREATE INDEX ix_journal_created ON journal_entries(created_at_epoch_ms)");
+            createIndexIfMissing(statement, "CREATE INDEX ix_journal_type_created ON journal_entries(journal_type, created_at_epoch_ms)");
+            createIndexIfMissing(statement, "CREATE INDEX ix_tax_category_effective ON tax_rules(category, effective_from_epoch_ms, effective_until_epoch_ms)");
+            createIndexIfMissing(statement, "CREATE INDEX ix_audit_created ON audit_events(created_at_epoch_ms)");
+            createIndexIfMissing(statement, "CREATE INDEX ix_loan_payments_loan_paid ON bank_loan_payments(loan_id, paid_at_epoch_ms)");
             statement.executeUpdate("INSERT IGNORE INTO schema_history(version, applied_at) VALUES ("
                     + VERSION + ", UTC_TIMESTAMP(3))");
+        }
+    }
+
+    private static void createIndexIfMissing(Statement statement, String sql) throws SQLException {
+        try {
+            statement.executeUpdate(sql);
+        } catch (SQLException exception) {
+            // MySQL reports error 1061 when an upgrade already created this index.
+            if (exception.getErrorCode() != 1061) throw exception;
         }
     }
 }

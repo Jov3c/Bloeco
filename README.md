@@ -93,6 +93,10 @@ redis:
 
 SQLite 仍保留为开发、离线测试和迁移模式，必须显式设置 `storage.type: sqlite`；MySQL 故障时不会静默回退到 SQLite。完整约束见 [MySQL/Redis V2 存储规范](docs/architecture/storage-v2-mysql-redis.md)。
 
+启动时会先校验存储类型、连接池、Redis 地址、初始资金、利率和准备金率；配置不安全时不会进入半初始化状态。经济与银行操作分别通过有界异步队列执行，队列关闭或已满时返回“经济账本暂时不可用”，不会把线程池异常传到 Paper 主线程。SQLite 初始化会启用 WAL、外键、忙等待和内存临时表，并自动创建账单、税则、审计及银行流水索引。
+
+Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实不受影响，未发布的 outbox 事件会保留并重试。Redis bridge 暴露故障次数和最近故障时间供运维监控，Redis 永远不能作为余额确认依据。
+
 ## 第三方开发
 
 请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。商店、证券、任务等插件不得直连 Bloeco 数据库或 Redis，必须通过异步原生 API 提交带机构、业务类型、中文说明和幂等键的结算。

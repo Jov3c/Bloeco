@@ -50,6 +50,10 @@ public final class MySqlLedgerStore implements LedgerStore {
             config.setMaximumPoolSize(Math.max(2, maximumPoolSize));
             config.setMinimumIdle(Math.min(2, Math.max(1, maximumPoolSize)));
             config.setPoolName("Bloeco-MySQL");
+            config.setConnectionTimeout(5_000);
+            config.setValidationTimeout(2_000);
+            config.setMaxLifetime(1_800_000);
+            config.setKeepaliveTime(120_000);
             config.addDataSourceProperty("useServerPrepStmts", "true");
             config.addDataSourceProperty("cachePrepStmts", "true");
             dataSource = new HikariDataSource(config);

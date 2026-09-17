@@ -31,6 +31,10 @@ public final class MySqlBankingStore implements BankingStore {
         config.setMaximumPoolSize(Math.max(2, maximumPoolSize));
         config.setMinimumIdle(Math.min(2, Math.max(1, maximumPoolSize)));
         config.setPoolName("Bloeco-Banking-MySQL");
+        config.setConnectionTimeout(5_000);
+        config.setValidationTimeout(2_000);
+        config.setMaxLifetime(1_800_000);
+        config.setKeepaliveTime(120_000);
         dataSource = new HikariDataSource(config);
         try (Connection connection = dataSource.getConnection()) {
             MySqlSchema.apply(connection);

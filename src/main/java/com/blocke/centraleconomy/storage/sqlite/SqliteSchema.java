@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates the version 2 central-journal schema on a new SQLite database. */
 final class SqliteSchema {
-    static final int VERSION = 3;
+    static final int VERSION = 4;
 
     private SqliteSchema() {}
 
@@ -211,6 +211,12 @@ final class SqliteSchema {
                         created_at_epoch_ms INTEGER NOT NULL
                     )
                     """);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_postings_account_entry ON postings(account_id, entry_id)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_journal_created ON journal_entries(created_at_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_journal_type_created ON journal_entries(journal_type, created_at_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_tax_category_effective ON tax_rules(category, effective_from_epoch_ms, effective_until_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_audit_created ON audit_events(created_at_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_loan_payments_loan_paid ON bank_loan_payments(loan_id, paid_at_epoch_ms)");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_history(version, applied_at_epoch_ms) VALUES ("
                     + VERSION + ", " + System.currentTimeMillis() + ")");
         }

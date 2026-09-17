@@ -52,7 +52,9 @@ These constraints are mandatory:
 
 ## Concurrency and Paper rules
 
-`AsyncEconomyFacade` owns one serial economy worker. JDBC and ledger writes stay off the Paper main thread. Bukkit inventory, player, and message operations must return to the Paper scheduler before touching Bukkit state. Do not block the main thread waiting on database futures.
+`AsyncEconomyFacade` and `AsyncBankingFacade` each own one serial economy worker with a bounded queue. JDBC and ledger writes stay off the Paper main thread. If a facade is closed or its queue rejects work, return a storage-unavailable result instead of leaking `RejectedExecutionException`. Bukkit inventory, player, and message operations must return to the Paper scheduler before touching Bukkit state. Do not block the main thread waiting on database futures.
+
+Redis is an optional accelerator only. `RedisEconomyBridge` records failure count and last failure time, then degrades to a no-op after a connection error; MySQL outbox rows remain pending until a later publish succeeds. Do not make a player transaction depend on Redis availability.
 
 ## Commands and GUI
 

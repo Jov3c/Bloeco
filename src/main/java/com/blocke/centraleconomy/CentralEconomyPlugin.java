@@ -10,6 +10,8 @@ import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.storage.redis.RedisEconomyBridge;
 import com.blocke.centraleconomy.storage.mysql.MySqlOutboxPublisher;
+import com.blocke.centraleconomy.config.ConfigurationSnapshot;
+import com.blocke.centraleconomy.config.ConfigurationValidator;
 import java.time.Duration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -36,6 +38,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 "bootstrap.player-initial-balance", "100.00");
         Money bankCapital = configuredPositiveMoney("bank.initial-capital", "250000.00");
         BankingPolicy bankPolicy = configuredBankPolicy();
+        validateStartupConfiguration(storageType, initialTreasury, initialPlayerBalance, bankCapital, bankPolicy);
         runtime = createRuntime(storageType, initialTreasury, bankCapital, bankPolicy);
         connectRedisIfEnabled(storageType);
         RoleAccess roles = new RoleAccess();
@@ -106,6 +109,27 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 Math.max(1, getConfig().getInt("bank.loan-term-days", 7)));
     }
 
+    private void validateStartupConfiguration(String storageType, Money treasury,
+                                              Money playerBalance, Money bankCapital,
+                                              BankingPolicy bankPolicy) {
+        ConfigurationSnapshot snapshot = new ConfigurationSnapshot(
+                storageType,
+                getConfig().getString("storage.mysql.jdbc-url", ""),
+                getConfig().getString("storage.mysql.username", ""),
+                getConfig().getBoolean("redis.enabled", true),
+                getConfig().getString("redis.uri", ""),
+                getConfig().getInt("storage.mysql.maximum-pool-size", 16),
+                getConfig().getLong("redis.cache-ttl-seconds", 60L),
+                treasury.minor(), playerBalance.minor(), bankCapital.minor(),
+                0, 0, 0,
+                bankPolicy.depositRateBasisPoints(), bankPolicy.loanRateBasisPoints(),
+                bankPolicy.reserveRatioBasisPoints(), bankPolicy.maximumLoan().minor());
+        var errors = ConfigurationValidator.validate(snapshot);
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException("配置校验失败：" + String.join("；", errors));
+        }
+    }
+
     private int configuredBasisPoints(String path, int defaultValue) {
         int value = getConfig().getInt(path, defaultValue);
         if (value < 0 || value > 10_000) throw new IllegalArgumentException(path + " must be 0..10000");
@@ -135,7 +159,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 String username = getConfig().getString("storage.mysql.username");
                 String password = resolveSecret("storage.mysql.password", "storage.mysql.password-env");
                 outboxPublisher = new MySqlOutboxPublisher(jdbcUrl, username, password,
-                        redisBridge, Duration.ofSeconds(2));
+                        redisBridge, Duration.ofSeconds(2), getLogger()::warning);
             }
         } catch (RuntimeException exception) {
             getLogger().warning("Redis unavailable; continuing with MySQL authority only.");

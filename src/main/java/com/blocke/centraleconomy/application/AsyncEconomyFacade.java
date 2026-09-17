@@ -23,8 +23,10 @@ import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -52,13 +54,18 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             Supplier<? extends LedgerStore> storeFactory, Clock clock, Optional<Money> initialTreasury) {
         Objects.requireNonNull(storeFactory, "storeFactory");
         Objects.requireNonNull(clock, "clock");
-        executor = Executors.newSingleThreadExecutor(task -> {
+        executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(256), task -> {
             Thread thread = new Thread(task, "Bloeco-Economy-1");
             thread.setDaemon(true);
             worker.set(thread);
             return thread;
-        });
-        executor.execute(() -> initialize(storeFactory, clock, initialTreasury));
+        }, new ThreadPoolExecutor.AbortPolicy());
+        try {
+            executor.execute(() -> initialize(storeFactory, clock, initialTreasury));
+        } catch (RejectedExecutionException exception) {
+            ready.complete(unavailable());
+        }
     }
 
     public static AsyncEconomyFacade sqlite(Path databasePath, Clock clock) {
@@ -206,21 +213,25 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             return CompletableFuture.completedFuture(unavailable());
         }
         CompletableFuture<Result<T>> result = new CompletableFuture<>();
-        executor.execute(() -> {
-            if (services == null) {
-                result.complete(unavailable());
-                return;
-            }
-            try {
-                result.complete(Result.success(operation.apply(services)));
-            } catch (LedgerException exception) {
-                result.complete(Result.failure(map(exception.code()), exception.getMessage()));
-            } catch (IllegalArgumentException exception) {
-                result.complete(Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage()));
-            } catch (RuntimeException exception) {
-                result.complete(Result.failure(ErrorCode.INTERNAL_ERROR, "经济操作失败。"));
-            }
-        });
+        try {
+            executor.execute(() -> {
+                if (services == null) {
+                    result.complete(unavailable());
+                    return;
+                }
+                try {
+                    result.complete(Result.success(operation.apply(services)));
+                } catch (LedgerException exception) {
+                    result.complete(Result.failure(map(exception.code()), exception.getMessage()));
+                } catch (IllegalArgumentException exception) {
+                    result.complete(Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage()));
+                } catch (RuntimeException exception) {
+                    result.complete(Result.failure(ErrorCode.INTERNAL_ERROR, "经济操作失败。"));
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            result.complete(unavailable());
+        }
         return result;
     }
 
@@ -249,14 +260,19 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             return;
         }
         CompletableFuture<Void> closed = new CompletableFuture<>();
-        executor.execute(() -> {
-            try {
-                closeStore.run();
-                closed.complete(null);
-            } catch (RuntimeException exception) {
-                closed.completeExceptionally(exception);
-            }
-        });
+        try {
+            executor.execute(() -> {
+                try {
+                    closeStore.run();
+                    closed.complete(null);
+                } catch (RuntimeException exception) {
+                    closed.completeExceptionally(exception);
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            closeStore.run();
+            closed.complete(null);
+        }
         executor.shutdown();
         try {
             closed.get(30, TimeUnit.SECONDS);

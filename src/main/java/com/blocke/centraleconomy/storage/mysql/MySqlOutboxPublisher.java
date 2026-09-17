@@ -12,16 +12,27 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 /** Replays committed MySQL outbox rows into Redis Streams; it never writes balances. */
 public final class MySqlOutboxPublisher implements AutoCloseable {
     private final HikariDataSource dataSource;
     private final RedisEconomyBridge redis;
     private final ScheduledExecutorService executor;
+    private final Consumer<String> warningLogger;
+    private final AtomicLong lastWarningEpochMs = new AtomicLong();
 
     public MySqlOutboxPublisher(String jdbcUrl, String username, String password,
                                 RedisEconomyBridge redis, Duration interval) {
+        this(jdbcUrl, username, password, redis, interval, ignored -> { });
+    }
+
+    public MySqlOutboxPublisher(String jdbcUrl, String username, String password,
+                                RedisEconomyBridge redis, Duration interval,
+                                Consumer<String> warningLogger) {
         this.redis = redis;
+        this.warningLogger = warningLogger == null ? ignored -> { } : warningLogger;
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl(jdbcUrl);
         config.setUsername(username);
@@ -29,6 +40,10 @@ public final class MySqlOutboxPublisher implements AutoCloseable {
         config.setMaximumPoolSize(1);
         config.setMinimumIdle(1);
         config.setPoolName("Bloeco-Outbox");
+        config.setConnectionTimeout(5_000);
+        config.setValidationTimeout(2_000);
+        config.setMaxLifetime(1_800_000);
+        config.setKeepaliveTime(120_000);
         this.dataSource = new HikariDataSource(config);
         this.executor = Executors.newSingleThreadScheduledExecutor(task -> {
             Thread thread = new Thread(task, "Bloeco-Redis-Outbox");
@@ -63,8 +78,13 @@ public final class MySqlOutboxPublisher implements AutoCloseable {
                     }
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception exception) {
             // MySQL remains correct; the next interval retries the same outbox rows.
+            long now = System.currentTimeMillis();
+            long previous = lastWarningEpochMs.get();
+            if (now - previous >= 60_000L && lastWarningEpochMs.compareAndSet(previous, now)) {
+                warningLogger.accept("Redis 事件发布暂时失败，待发布账单会保留并自动重试。");
+            }
         }
     }
 

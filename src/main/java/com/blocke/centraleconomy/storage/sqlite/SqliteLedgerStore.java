@@ -654,6 +654,7 @@ public final class SqliteLedgerStore implements LedgerStore {
             statement.execute("PRAGMA foreign_keys=ON");
             statement.execute("PRAGMA busy_timeout=5000");
             statement.execute("PRAGMA synchronous=FULL");
+            statement.execute("PRAGMA temp_store=MEMORY");
         }
     }
 

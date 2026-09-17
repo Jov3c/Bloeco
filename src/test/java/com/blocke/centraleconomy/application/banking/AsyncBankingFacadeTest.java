@@ -1,12 +1,15 @@
 package com.blocke.centraleconomy.application.banking;
 
 import com.blocke.centraleconomy.application.AsyncEconomyFacade;
+import com.blocke.centraleconomy.application.result.ErrorCode;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.UUID;
+import java.lang.reflect.Field;
+import java.util.concurrent.ExecutorService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,6 +37,27 @@ class AsyncBankingFacadeTest {
                         .toCompletableFuture().join().isSuccess());
                 assertEquals(Money.parse("10"), banking.playerSnapshot(player)
                         .toCompletableFuture().join().value().deposit());
+            }
+        }
+    }
+
+    @Test
+    void executorRejectionReturnsUnavailableResult() throws Exception {
+        Path database = temporaryDirectory.resolve("economy.db");
+        Clock clock = Clock.systemUTC();
+        try (AsyncEconomyFacade economy = AsyncEconomyFacade.sqlite(database, clock, Money.parse("1000000.00"))) {
+            assertTrue(economy.readyStage().toCompletableFuture().join().isSuccess());
+            BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
+            try (AsyncBankingFacade banking = new AsyncBankingFacade(
+                    () -> new SqliteBankingStore(database, clock), economy.readyStage(),
+                    Money.parse("250000"), policy)) {
+                assertTrue(banking.readyStage().toCompletableFuture().join().isSuccess());
+                Field field = AsyncBankingFacade.class.getDeclaredField("executor");
+                field.setAccessible(true);
+                ((ExecutorService) field.get(banking)).shutdown();
+
+                assertEquals(ErrorCode.STORAGE_UNAVAILABLE,
+                        banking.playerSnapshot(UUID.randomUUID()).toCompletableFuture().join().errorCode());
             }
         }
     }

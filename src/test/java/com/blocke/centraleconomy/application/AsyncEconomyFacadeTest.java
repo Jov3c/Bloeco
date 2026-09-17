@@ -17,6 +17,8 @@ import java.time.Clock;
 import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ExecutorService;
+import java.lang.reflect.Field;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -66,6 +68,19 @@ class AsyncEconomyFacadeTest {
         assertTrue(accepted.toCompletableFuture().join().isSuccess());
         Result<Long> rejected = facade.balance(AccountId.treasury()).toCompletableFuture().join();
         assertEquals(ErrorCode.STORAGE_UNAVAILABLE, rejected.errorCode());
+    }
+
+    @Test
+    void executorRejectionReturnsUnavailableResult() throws Exception {
+        facade = AsyncEconomyFacade.sqlite(temporaryDirectory.resolve("economy.db"), Clock.systemUTC());
+        assertTrue(facade.readyStage().toCompletableFuture().join().isSuccess());
+        Field field = AsyncEconomyFacade.class.getDeclaredField("executor");
+        field.setAccessible(true);
+        ((ExecutorService) field.get(facade)).shutdown();
+
+        Result<Long> result = facade.balance(AccountId.treasury()).toCompletableFuture().join();
+
+        assertEquals(ErrorCode.STORAGE_UNAVAILABLE, result.errorCode());
     }
 
     @Test
