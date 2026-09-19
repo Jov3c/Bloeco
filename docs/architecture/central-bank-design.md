@@ -80,6 +80,8 @@ Bloeco 只维护一套中央总账。“插件专属账本”是中央总账内�
 
 `account_balances` 是与分录在同一 SQL 事务内更新的物化余额，用于高效查询；`postings` 是永久审计依据。启动校验和管理命令可以从分录重算余额并与物化余额比较。
 
+MySQL 物化余额还包含单调递增的 `version`。一次资金操作在共享 `BloecoDataSource` 获取一个短连接，由 `MySqlTransactionManager` 统一提交或回滚；多账户按标识排序并一次性加行锁。Ledger、Banking 与 Outbox 不建立各自连接池。
+
 ### 4.2 幂等与冲正
 
 所有外部写请求必须携带 `client_id + idempotency_key`。同一组合只能产生一个结果：
@@ -234,10 +236,11 @@ redis:
 
 - InnoDB、`utf8mb4`、HikariCP
 - `READ COMMITTED` 事务隔离
-- 按稳定顺序锁定受影响账户行，避免死锁
+- Runtime 统一拥有一个连接池，Repository 不提交、回滚或创建连接
+- 按稳定顺序一次性锁定受影响账户行，避免死锁；余额更新递增 `version`
 - 唯一约束保证幂等
 - `outbox_events` 与账本事务一起写入，保证 Redis 事件最终可补发
-- 使用数据库级写入者租约，保证同一 Bloeco 数据库只有一个活动写入实例
+- V001-V006 不可变顺序迁移；历史断档或迁移失败时拒绝启动
 
 SQLite 和 MySQL 必须通过同一套存储契约测试。两者的余额、幂等、并发、回滚、冲正和供给统计结果必须一致。
 
@@ -250,7 +253,7 @@ Redis 默认开启，只允许保存：
 - GUI 统计快照；
 - 可重建的运行指标。
 
-写流程固定为“提交 MySQL 账本与 outbox -> 清除缓存 -> 发布 Redis Stream 事件”。Redis 发布失败只记录降级状态，后台依据 outbox 重试，不回滚已提交的 SQL。缓存未命中或不可用时读取 MySQL。
+写流程固定为“提交 MySQL 账本与 outbox -> 清除缓存 -> 发布 Redis Stream 事件”。Redis 发布失败进入 `DEGRADED`，后台每 5–30 秒探测并在 `RECONNECTING` 成功后回到 `AVAILABLE`；Publisher 自动依据 outbox 续发，不回滚已提交的 SQL。缓存未命中或不可用时读取 MySQL。
 
 ## 9. 数据模型
 

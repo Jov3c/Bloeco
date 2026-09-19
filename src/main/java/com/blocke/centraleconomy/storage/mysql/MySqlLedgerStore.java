@@ -15,9 +15,10 @@ import com.blocke.centraleconomy.domain.ledger.Posting;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
 import com.blocke.centraleconomy.domain.tax.TaxRule;
+import com.blocke.centraleconomy.storage.mysql.repository.BalanceRepository;
+import com.blocke.centraleconomy.storage.mysql.repository.LedgerRepository;
+import com.blocke.centraleconomy.storage.mysql.repository.OutboxRepository;
 
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -33,41 +34,43 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.sql.DataSource;
 
 /** MySQL authority for the immutable, balanced Bloeco central journal. */
 public final class MySqlLedgerStore implements LedgerStore {
-    private final HikariDataSource dataSource;
-    private final Connection connection;
-    private boolean closed;
+    private final DataSource dataSource;
+    private final MySqlTransactionManager transactions;
+    private final ConnectionScope connection;
+    private final AutoCloseable ownedDataSource;
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final BalanceRepository balanceRepository = new BalanceRepository();
+    private final LedgerRepository ledgerRepository = new LedgerRepository();
+    private final OutboxRepository outboxRepository = new OutboxRepository();
 
     public MySqlLedgerStore(String jdbcUrl, String username, String password, int maximumPoolSize) {
-        Objects.requireNonNull(jdbcUrl, "jdbcUrl");
-        try {
-            HikariConfig config = new HikariConfig();
-            config.setJdbcUrl(jdbcUrl);
-            config.setUsername(Objects.requireNonNull(username, "username"));
-            config.setPassword(password == null ? "" : password);
-            config.setMaximumPoolSize(Math.max(2, maximumPoolSize));
-            config.setMinimumIdle(Math.min(2, Math.max(1, maximumPoolSize)));
-            config.setPoolName("Bloeco-MySQL");
-            config.setConnectionTimeout(5_000);
-            config.setValidationTimeout(2_000);
-            config.setMaxLifetime(1_800_000);
-            config.setKeepaliveTime(120_000);
-            config.addDataSourceProperty("useServerPrepStmts", "true");
-            config.addDataSourceProperty("cachePrepStmts", "true");
-            dataSource = new HikariDataSource(config);
-            connection = dataSource.getConnection();
-            connection.setAutoCommit(true);
-            connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
-            MySqlSchema.apply(connection);
-        } catch (SQLException exception) {
-            throw storageFailure("unable to open MySQL ledger", exception);
-        }
+        this(new BloecoDataSource(jdbcUrl, username, password, maximumPoolSize));
+    }
+
+    private MySqlLedgerStore(BloecoDataSource ownedDataSource) {
+        this(ownedDataSource, new MySqlTransactionManager(ownedDataSource.dataSource()), ownedDataSource);
+    }
+
+    public MySqlLedgerStore(BloecoDataSource sharedDataSource, MySqlTransactionManager transactions) {
+        this(sharedDataSource, transactions, null);
+    }
+
+    private MySqlLedgerStore(BloecoDataSource source, MySqlTransactionManager transactions,
+                             AutoCloseable ownedDataSource) {
+        this.dataSource = Objects.requireNonNull(source, "source").dataSource();
+        this.transactions = Objects.requireNonNull(transactions, "transactions");
+        this.connection = new ConnectionScope(dataSource);
+        this.ownedDataSource = ownedDataSource;
+        MySqlMigrations.migrate(dataSource, transactions);
     }
 
     @Override
-    public synchronized void createAccount(Account account) {
+    public void createAccount(Account account) {
         requireOpen();
         Objects.requireNonNull(account, "account");
         try {
@@ -95,15 +98,16 @@ public final class MySqlLedgerStore implements LedgerStore {
                 balance.executeUpdate();
             }
             commitTransaction();
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to create account", exception);
         }
     }
 
     @Override
-    public synchronized JournalEntry commit(JournalEntry entry) {
+    public JournalEntry commit(JournalEntry entry) {
         requireOpen();
         Objects.requireNonNull(entry, "entry");
         if (entry.clientId() != null) {
@@ -122,36 +126,43 @@ public final class MySqlLedgerStore implements LedgerStore {
             applyEntry(entry);
             commitTransaction();
             return entry;
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to commit journal", exception);
         }
     }
 
     @Override
-    public synchronized void createIssuanceRequest(IssuanceRecord request) {
+    public void createIssuanceRequest(IssuanceRecord request) {
         requireOpen();
         Objects.requireNonNull(request, "request");
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO issuance_requests(request_id, amount_minor, status, reason, requester_id,
-                    approver_id, requested_at_epoch_ms, approved_at_epoch_ms, executed_entry_id)
-                VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
-                """)) {
-            statement.setString(1, request.requestId().toString());
-            statement.setLong(2, request.amount().minor());
-            statement.setString(3, request.status().name());
-            statement.setString(4, request.reason());
-            statement.setString(5, request.requesterId());
-            statement.setLong(6, request.requestedAt().toEpochMilli());
-            statement.executeUpdate();
-        } catch (SQLException exception) {
+        try {
+            beginImmediate();
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO issuance_requests(request_id, amount_minor, status, reason, requester_id,
+                        approver_id, requested_at_epoch_ms, approved_at_epoch_ms, executed_entry_id)
+                    VALUES (?, ?, ?, ?, ?, NULL, ?, NULL, NULL)
+                    """)) {
+                statement.setString(1, request.requestId().toString());
+                statement.setLong(2, request.amount().minor());
+                statement.setString(3, request.status().name());
+                statement.setString(4, request.reason());
+                statement.setString(5, request.requesterId());
+                statement.setLong(6, request.requestedAt().toEpochMilli());
+                statement.executeUpdate();
+            }
+            commitTransaction();
+        } catch (Throwable exception) {
+            rollback();
+            if (exception instanceof Error error) throw error;
             throw storageFailure("unable to create issuance request", exception);
         }
     }
 
     @Override
-    public synchronized Optional<IssuanceRecord> findIssuanceRequest(UUID requestId) {
+    public Optional<IssuanceRecord> findIssuanceRequest(UUID requestId) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT * FROM issuance_requests WHERE request_id = ?")) {
@@ -165,14 +176,14 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized IssuanceRecord issuanceRequest(UUID requestId) {
+    public IssuanceRecord issuanceRequest(UUID requestId) {
         return findIssuanceRequest(requestId)
                 .orElseThrow(() -> new LedgerException(LedgerException.Code.POLICY_REJECTED,
                         "issuance request does not exist"));
     }
 
     @Override
-    public synchronized IssuanceRecord approveIssuance(UUID requestId, String approverId, Instant approvedAt) {
+    public IssuanceRecord approveIssuance(UUID requestId, String approverId, Instant approvedAt) {
         requireOpen();
         try {
             beginImmediate();
@@ -199,15 +210,16 @@ public final class MySqlLedgerStore implements LedgerStore {
             }
             commitTransaction();
             return issuanceRequest(requestId);
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to approve issuance request", exception);
         }
     }
 
     @Override
-    public synchronized JournalEntry commitApprovedIssuance(UUID requestId, JournalEntry entry) {
+    public JournalEntry commitApprovedIssuance(UUID requestId, JournalEntry entry) {
         requireOpen();
         if (entry.type() != JournalType.ISSUE || entry.postings().size() != 2
                 || !entry.postings().contains(new Posting(AccountId.issuanceControl(),
@@ -250,15 +262,16 @@ public final class MySqlLedgerStore implements LedgerStore {
             }
             commitTransaction();
             return entry;
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to execute issuance request", exception);
         }
     }
 
     @Override
-    public synchronized void setPolicyLimit(String key, long value, String actorId, String memo, Instant changedAt) {
+    public void setPolicyLimit(String key, long value, String actorId, String memo, Instant changedAt) {
         requireOpen();
         try {
             beginImmediate();
@@ -277,14 +290,15 @@ public final class MySqlLedgerStore implements LedgerStore {
             }
             insertAudit(actorId, "POLICY_LIMIT_CHANGED", memo, null, changedAt);
             commitTransaction();
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             throw storageFailure("unable to update policy limit", exception);
         }
     }
 
     @Override
-    public synchronized long policyLimit(String key, long defaultValue) {
+    public long policyLimit(String key, long defaultValue) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT value_minor FROM policy_limits WHERE policy_key = ?")) {
@@ -298,17 +312,17 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized long issuedSince(Instant since) {
+    public long issuedSince(Instant since) {
         return flowSince(JournalType.ISSUE, AccountId.treasury(), since);
     }
 
     @Override
-    public synchronized long retiredSince(Instant since) {
+    public long retiredSince(Instant since) {
         return flowSince(JournalType.RETIRE, AccountId.retiredControl(), since);
     }
 
     @Override
-    public synchronized TaxRule changeTaxRule(TaxRule rule) {
+    public TaxRule changeTaxRule(TaxRule rule) {
         requireOpen();
         Objects.requireNonNull(rule, "rule");
         try {
@@ -339,15 +353,16 @@ public final class MySqlLedgerStore implements LedgerStore {
             insertAudit(rule.actorId(), "TAX_RULE_CHANGED", rule.memo(), null, rule.effectiveFrom());
             commitTransaction();
             return rule;
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to change tax rule", exception);
         }
     }
 
     @Override
-    public synchronized Optional<TaxRule> currentTaxRule(TaxCategory category, Instant at) {
+    public Optional<TaxRule> currentTaxRule(TaxCategory category, Instant at) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT * FROM tax_rules
@@ -367,7 +382,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized Optional<TaxRule> taxRule(UUID versionId) {
+    public Optional<TaxRule> taxRule(UUID versionId) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT * FROM tax_rules WHERE version_id = ?")) {
@@ -381,12 +396,12 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized int taxRuleCount() {
+    public int taxRuleCount() {
         return scalarInt("SELECT COUNT(*) FROM tax_rules");
     }
 
     @Override
-    public synchronized PlayerSettlement commitPlayerSettlement(
+    public PlayerSettlement commitPlayerSettlement(
             JournalEntry entry, PlayerSettlement settlement) {
         requireOpen();
         Objects.requireNonNull(entry, "entry");
@@ -409,15 +424,16 @@ public final class MySqlLedgerStore implements LedgerStore {
             insertPlayerSettlement(settlement);
             commitTransaction();
             return settlement;
-        } catch (SQLException | RuntimeException exception) {
+        } catch (Throwable exception) {
             rollback();
+            if (exception instanceof Error error) throw error;
             if (exception instanceof LedgerException ledgerException) throw ledgerException;
             throw storageFailure("unable to commit player settlement", exception);
         }
     }
 
     @Override
-    public synchronized Optional<PlayerSettlement> playerSettlement(String clientId, String idempotencyKey) {
+    public Optional<PlayerSettlement> playerSettlement(String clientId, String idempotencyKey) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT s.* FROM player_settlements s
@@ -435,7 +451,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized long balance(AccountId accountId) {
+    public long balance(AccountId accountId) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
         try (PreparedStatement statement = connection.prepareStatement(
@@ -454,7 +470,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized Optional<JournalEntry> entry(UUID entryId) {
+    public Optional<JournalEntry> entry(UUID entryId) {
         requireOpen();
         Objects.requireNonNull(entryId, "entryId");
         try (PreparedStatement statement = connection.prepareStatement(
@@ -469,7 +485,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized Optional<JournalEntry> idempotentResult(String clientId, String idempotencyKey) {
+    public Optional<JournalEntry> idempotentResult(String clientId, String idempotencyKey) {
         requireOpen();
         Objects.requireNonNull(clientId, "clientId");
         Objects.requireNonNull(idempotencyKey, "idempotencyKey");
@@ -489,7 +505,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized boolean hasReversal(UUID originalEntryId) {
+    public boolean hasReversal(UUID originalEntryId) {
         requireOpen();
         Objects.requireNonNull(originalEntryId, "originalEntryId");
         try (PreparedStatement statement = connection.prepareStatement(
@@ -504,12 +520,12 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized int entryCount() {
+    public int entryCount() {
         return scalarInt("SELECT COUNT(*) FROM journal_entries");
     }
 
     @Override
-    public synchronized int entriesForKey(String clientId, String idempotencyKey) {
+    public int entriesForKey(String clientId, String idempotencyKey) {
         requireOpen();
         try (PreparedStatement statement = connection.prepareStatement(
                 "SELECT COUNT(*) FROM journal_entries WHERE client_id = ? AND idempotency_key = ?")) {
@@ -524,14 +540,14 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized MonetaryTotals monetaryTotals() {
+    public MonetaryTotals monetaryTotals() {
         long issued = Math.negateExact(balance(AccountId.issuanceControl()));
         long retired = balance(AccountId.retiredControl());
         return new MonetaryTotals(issued, retired, Math.subtractExact(issued, retired));
     }
 
     @Override
-    public synchronized Map<AccountClass, Long> accountClassTotals() {
+    public Map<AccountClass, Long> accountClassTotals() {
         requireOpen();
         Map<AccountClass, Long> totals = new java.util.EnumMap<>(AccountClass.class);
         for (AccountClass accountClass : AccountClass.values()) totals.put(accountClass, 0L);
@@ -548,7 +564,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized long playerCirculation() {
+    public long playerCirculation() {
         return scalarLong("""
                 SELECT COALESCE(SUM(b.balance_minor), 0)
                 FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
@@ -557,7 +573,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized Map<JournalType, Long> journalVolumeSince(Instant since) {
+    public Map<JournalType, Long> journalVolumeSince(Instant since) {
         requireOpen();
         Objects.requireNonNull(since, "since");
         Map<JournalType, Long> totals = new java.util.EnumMap<>(JournalType.class);
@@ -579,7 +595,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
+    public List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("journal limit must be between 1 and 100");
@@ -608,7 +624,7 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized IntegrityReport verifyIntegrity() {
+    public IntegrityReport verifyIntegrity() {
         requireOpen();
         List<String> violations = new ArrayList<>();
         try (Statement statement = connection.createStatement();
@@ -648,48 +664,48 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized void close() {
-        if (closed) return;
+    public void close() {
+        if (!closed.compareAndSet(false, true)) return;
         try {
-            connection.close();
-            dataSource.close();
-            closed = true;
-        } catch (SQLException exception) {
+            if (ownedDataSource != null) ownedDataSource.close();
+        } catch (Exception exception) {
             throw storageFailure("unable to close MySQL ledger", exception);
         }
     }
 
     private void applyEntry(JournalEntry entry) throws SQLException {
         Map<AccountId, Long> deltas = aggregate(entry.postings());
-        Map<AccountId, StoredAccount> accounts = loadAccounts(deltas.keySet().stream().sorted().toList());
+        Map<AccountId, BalanceRepository.StoredAccount> accounts =
+                balanceRepository.lockInOrder(connection.currentTransaction(),
+                        deltas.keySet().stream().sorted().toList());
         Map<AccountId, Long> updatedBalances = new LinkedHashMap<>();
         for (Map.Entry<AccountId, Long> delta : deltas.entrySet()) {
-            StoredAccount account = accounts.get(delta.getKey());
+            BalanceRepository.StoredAccount account = accounts.get(delta.getKey());
             if (account == null) {
                 throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND,
                         "account does not exist: " + delta.getKey().value());
             }
-            if (!"ACTIVE".equals(account.status)) {
+            if (!"ACTIVE".equals(account.status())) {
                 throw new LedgerException(LedgerException.Code.ACCOUNT_FROZEN,
                         "account is not active: " + delta.getKey().value());
             }
             long updated;
             try {
-                updated = Math.addExact(account.balance, delta.getValue());
+                updated = Math.addExact(account.balance(), delta.getValue());
             } catch (ArithmeticException exception) {
                 throw new LedgerException(LedgerException.Code.INVALID_AMOUNT,
                         "account balance exceeds the supported range", exception);
             }
-            if (!account.permitsNegative && updated < 0) {
+            if (!account.permitsNegative() && updated < 0) {
                 throw new LedgerException(LedgerException.Code.INSUFFICIENT_FUNDS,
                         "account has insufficient funds: " + delta.getKey().value());
             }
             updatedBalances.put(delta.getKey(), updated);
         }
-        insertJournal(entry);
-        updateBalances(updatedBalances);
-        if (entry.clientId() != null) insertIdempotency(entry);
-        insertOutbox(entry);
+        ledgerRepository.insertJournal(connection.currentTransaction(), entry);
+        balanceRepository.update(connection.currentTransaction(), updatedBalances);
+        if (entry.clientId() != null) ledgerRepository.insertIdempotency(connection.currentTransaction(), entry);
+        outboxRepository.insertJournalCommitted(connection.currentTransaction(), entry);
     }
 
     private IssuanceRecord readIssuance(ResultSet result) throws SQLException {
@@ -806,93 +822,6 @@ public final class MySqlLedgerStore implements LedgerStore {
         return deltas;
     }
 
-    private Map<AccountId, StoredAccount> loadAccounts(List<AccountId> accountIds) throws SQLException {
-        Map<AccountId, StoredAccount> result = new HashMap<>();
-        try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT a.status, a.permits_negative, b.balance_minor
-                FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
-                WHERE a.account_id = ?
-                FOR UPDATE
-                """)) {
-            for (AccountId accountId : accountIds) {
-                statement.setString(1, accountId.value());
-                try (ResultSet row = statement.executeQuery()) {
-                    if (row.next()) {
-                        result.put(accountId, new StoredAccount(row.getString(1), row.getInt(2) == 1, row.getLong(3)));
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    private void insertJournal(JournalEntry entry) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO journal_entries(entry_id, journal_type, memo, client_id, idempotency_key,
-                    reversal_of_entry_id, created_at_epoch_ms) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """)) {
-            statement.setString(1, entry.id().toString());
-            statement.setString(2, entry.type().name());
-            statement.setString(3, entry.memo());
-            statement.setString(4, entry.clientId());
-            statement.setString(5, entry.idempotencyKey());
-            statement.setString(6, entry.reversalOf() == null ? null : entry.reversalOf().toString());
-            statement.setLong(7, entry.createdAt().toEpochMilli());
-            statement.executeUpdate();
-        }
-        try (PreparedStatement statement = connection.prepareStatement(
-                "INSERT INTO postings(entry_id, line_no, account_id, amount_minor) VALUES (?, ?, ?, ?)")) {
-            for (int index = 0; index < entry.postings().size(); index++) {
-                Posting posting = entry.postings().get(index);
-                statement.setString(1, entry.id().toString());
-                statement.setInt(2, index + 1);
-                statement.setString(3, posting.accountId().value());
-                statement.setLong(4, posting.amountMinor());
-                statement.addBatch();
-            }
-            statement.executeBatch();
-        }
-    }
-
-    private void updateBalances(Map<AccountId, Long> balances) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement(
-                "UPDATE account_balances SET balance_minor = ? WHERE account_id = ?")) {
-            for (Map.Entry<AccountId, Long> balance : balances.entrySet()) {
-                statement.setLong(1, balance.getValue());
-                statement.setString(2, balance.getKey().value());
-                statement.addBatch();
-            }
-            statement.executeBatch();
-        }
-    }
-
-    private void insertIdempotency(JournalEntry entry) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO idempotency_records(client_id, idempotency_key, entry_id, request_fingerprint)
-                VALUES (?, ?, ?, ?)
-                """)) {
-            statement.setString(1, entry.clientId());
-            statement.setString(2, entry.idempotencyKey());
-            statement.setString(3, entry.id().toString());
-            statement.setString(4, fingerprint(entry));
-            statement.executeUpdate();
-        }
-    }
-
-    private void insertOutbox(JournalEntry entry) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO outbox_events(event_id, event_type, aggregate_id, payload, stream_key, created_at)
-                VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(3))
-                """)) {
-            statement.setString(1, UUID.randomUUID().toString());
-            statement.setString(2, "JOURNAL_COMMITTED");
-            statement.setString(3, entry.id().toString());
-            statement.setString(4, "{\"journal_id\":\"" + entry.id() + "\",\"type\":\""
-                    + entry.type().name() + "\"}");
-            statement.setString(5, "bloeco:v2:ledger-events");
-            statement.executeUpdate();
-        }
-    }
 
     private JournalEntry readEntry(ResultSet row) throws SQLException {
         UUID id = UUID.fromString(row.getString("entry_id"));
@@ -920,10 +849,6 @@ public final class MySqlLedgerStore implements LedgerStore {
                 && first.postings().equals(second.postings());
     }
 
-    private static String fingerprint(JournalEntry entry) {
-        return Integer.toHexString(Objects.hash(entry.type(), entry.memo(), entry.reversalOf(), entry.postings()));
-    }
-
     private int scalarInt(String sql) {
         requireOpen();
         try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
@@ -943,31 +868,43 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     private void beginImmediate() throws SQLException {
-        connection.setAutoCommit(false);
+        connection.bind(transactions.begin());
     }
 
     private void commitTransaction() throws SQLException {
-        connection.commit();
-        connection.setAutoCommit(true);
+        Connection active = connection.unbind();
+        if (active == null) throw new SQLException("no active transaction");
+        try {
+            transactions.commit(active);
+        } catch (SQLException commitFailure) {
+            try { transactions.rollback(active); }
+            catch (SQLException rollbackFailure) { commitFailure.addSuppressed(rollbackFailure); }
+            throw commitFailure;
+        } finally {
+            active.close();
+        }
     }
 
     private void rollback() {
+        Connection active = connection.unbind();
+        if (active == null) return;
         try {
-            connection.rollback();
-            connection.setAutoCommit(true);
-        } catch (SQLException ignored) { }
+            transactions.rollback(active);
+        } catch (SQLException ignored) {
+        } finally {
+            try { active.close(); } catch (SQLException ignored) { }
+        }
     }
 
     private void requireOpen() {
-        if (closed) {
+        if (closed.get()) {
             throw new LedgerException(LedgerException.Code.STORAGE_UNAVAILABLE, "ledger is closed");
         }
     }
 
-    private static LedgerException storageFailure(String message, Exception cause) {
+    private static LedgerException storageFailure(String message, Throwable cause) {
         return new LedgerException(LedgerException.Code.STORAGE_UNAVAILABLE, message, cause);
     }
 
-    private record StoredAccount(String status, boolean permitsNegative, long balance) {}
 }
 

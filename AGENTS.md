@@ -24,7 +24,7 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - `domain/banking/`: bank policy and immutable customer/balance-sheet snapshots.
 - `application/banking/`: the asynchronous banking boundary and persistence port.
 - `application/`: central-bank, payment, tax, query, result, and asynchronous use cases. `LedgerStore` is the persistence port.
-- `storage/mysql/`: MySQL/InnoDB schema, pooled JDBC commits, integrity verification, and the outbox table.
+- `storage/mysql/`: runtime-owned `BloecoDataSource`, `MySqlTransactionManager`, V001-V006 migrations, repositories, integrity verification, and Outbox publication. Stores must never create a second pool when Runtime supplies the shared source.
 - `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration for local/import use.
 - `storage/redis/`: optional cache and Stream bridge; connection failure is a non-authoritative degradation.
 - `paper/`: plugin lifecycle adapters, `/eco`, `/pay`, permissions, GUI screens, and player-facing formatting.
@@ -54,7 +54,9 @@ These constraints are mandatory:
 
 `AsyncEconomyFacade` and `AsyncBankingFacade` each own one serial economy worker with a bounded queue. JDBC and ledger writes stay off the Paper main thread. If a facade is closed or its queue rejects work, return a storage-unavailable result instead of leaking `RejectedExecutionException`. Bukkit inventory, player, and message operations must return to the Paper scheduler before touching Bukkit state. Do not block the main thread waiting on database futures.
 
-Redis is an optional accelerator only. `RedisEconomyBridge` records failure count and last failure time, then degrades to a no-op after a connection error; MySQL outbox rows remain pending until a later publish succeeds. Do not make a player transaction depend on Redis availability.
+MySQL writes use `MySqlTransactionManager`; repositories receive the transaction `Connection` and never call commit or rollback. Balance-changing transactions sort account IDs, acquire one ordered `SELECT ... FOR UPDATE`, and increment `account_balances.version`. `MySqlLedgerStore` must not retain a JDBC `Connection` or use store-level `synchronized` as its concurrency model.
+
+Redis is an optional accelerator only. `RedisEconomyBridge` moves through `AVAILABLE`, `DEGRADED`, and `RECONNECTING`, records failure/recovery metrics, and probes every configured 5–30 seconds. MySQL outbox rows remain pending until publish succeeds and automatically resume after recovery. Delivery is at least once; consumers deduplicate by `event_id`. Do not make a player transaction depend on Redis availability.
 
 ## Commands and GUI
 
@@ -94,6 +96,6 @@ Run:
 ./gradlew clean test shadowJar
 ```
 
-On Windows use `gradlew.bat`. Add a failing regression test before production behavior changes, then run the focused test and the full suite. Inspect the shaded JAR's `plugin.yml` and `config.yml` before release.
+On Windows use `gradlew.bat`. Add a failing regression test before production behavior changes, then run the focused test and the full suite. Inspect the shaded JAR's `plugin.yml` and `config.yml` before release. MySQL changes also require the gated integration suite and concurrency stress test against an isolated MySQL database.
 
 Keep GitHub source clean: commit source, tests, Gradle files, README, and product/technical documentation only. Never commit build output, Paper runtime data, worlds, logs, databases, caches, IDE state, local plans, credentials, or generated QA artifacts. Release JARs belong in GitHub Releases, not in the source tree.

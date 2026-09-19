@@ -6,8 +6,10 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 
 ## 当前功能
 
-- MySQL 8.4/InnoDB 默认权威存储：账户、余额、分录、税费、发行、幂等和审计都在同一事务中提交。
-- Redis 7 默认作为可重建缓存与 Redis Stream 事件层；Redis 永远不是余额或账本真相源，断开时不影响 MySQL 账本。
+- MySQL 8.4/InnoDB 默认权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
+- 数据库并发保护：多账户资金操作按 `account_id` 固定顺序一次性 `FOR UPDATE`，物化余额每次更新都会递增 `version`，不依赖 Java 全局锁。
+- 正式版本迁移：V001-V006 顺序执行并逐版记录；旧 V3/V4/V5 数据库会补齐历史检查点后升级，迁移失败时经济中心拒绝启动。
+- Redis 7 默认作为可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
 - 整数最小货币单位：金额全程使用 `long`，拒绝浮点误差与超过两位小数的玩家输入。
 - 分级账户：货币当局、财政、机构、玩家四级分类；每个余额都能追溯到复式分录。
 - 受控发行：申请、异人审批、执行三步完成；新货币只能先进入国库，并受单笔、每日和滚动周期政策限制。
@@ -83,19 +85,20 @@ bank:
 storage:
   type: mysql
   mysql:
-    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC&characterEncoding=UTF-8"
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8"
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
 redis:
   enabled: true
   uri: "redis://127.0.0.1:6379/0"
+  reconnect-interval-seconds: 10
 ```
 
 SQLite 仍保留为开发、离线测试和迁移模式，必须显式设置 `storage.type: sqlite`；MySQL 故障时不会静默回退到 SQLite。完整约束见 [MySQL/Redis V2 存储规范](docs/architecture/storage-v2-mysql-redis.md)。
 
 启动时会先校验存储类型、连接池、Redis 地址、初始资金、利率和准备金率；配置不安全时不会进入半初始化状态。经济与银行操作分别通过有界异步队列执行，队列关闭或已满时返回“经济账本暂时不可用”，不会把线程池异常传到 Paper 主线程。SQLite 初始化会启用 WAL、外键、忙等待和内存临时表，并自动创建账单、税则、审计及银行流水索引。
 
-Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实不受影响，未发布的 outbox 事件会保留并重试。Redis bridge 暴露故障次数和最近故障时间供运维监控，Redis 永远不能作为余额确认依据。
+Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实不受影响，未发布的 outbox 事件会保留并重试。状态为 `AVAILABLE`、`DEGRADED` 或 `RECONNECTING`；bridge 暴露可用性、故障次数、最近故障/恢复时间和重连次数。Stream 采用至少一次投递，消费端必须按 `event_id` 去重，Redis 永远不能作为余额确认依据。
 
 ## 第三方开发
 
@@ -111,4 +114,4 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 ./gradlew clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.3.0.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.4.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。

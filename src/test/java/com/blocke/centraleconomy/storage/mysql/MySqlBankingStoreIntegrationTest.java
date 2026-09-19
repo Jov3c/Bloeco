@@ -19,35 +19,37 @@ class MySqlBankingStoreIntegrationTest {
         String username = System.getenv("BLOECO_MYSQL_TEST_USER");
         String password = System.getenv("BLOECO_MYSQL_TEST_PASSWORD");
         Clock clock = Clock.systemUTC();
-        UUID player = UUID.fromString("00000000-0000-0000-0000-000000001399");
+        UUID player = UUID.randomUUID();
         UUID allBalancePlayer = UUID.randomUUID();
-        String allBalanceKey = allBalancePlayer.toString();
+        String runKey = UUID.randomUUID().toString();
+        long supplyBefore;
         try (MySqlLedgerStore ledger = new MySqlLedgerStore(url, username, password, 4)) {
             CentralBankService central = new CentralBankService(ledger, clock);
             central.initializeCentralAccounts();
             central.bootstrapTreasury(Money.parse("1000000"));
+            supplyBefore = ledger.monetaryTotals().netSupplyMinor();
             central.adjustPlayerBalance(player, Money.parse("1000"), "mysql-bank-test",
-                    "MySQL 银行测试资金", "mysql-bank-fund");
+                    "MySQL 银行测试资金", "mysql-bank-fund:" + runKey);
             central.adjustPlayerBalance(allBalancePlayer, Money.parse("123.45"), "mysql-bank-test",
-                    "MySQL 银行全部存取测试资金", "mysql-bank-all-fund:" + allBalanceKey);
+                    "MySQL 银行全部存取测试资金", "mysql-bank-all-fund:" + runKey);
         }
         BankingPolicy policy = new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7);
         try (MySqlBankingStore bank = new MySqlBankingStore(url, username, password, 4, clock)) {
             bank.initialize(Money.parse("250000"), policy);
-            bank.deposit(player, Money.parse("500"), "mysql-bank-deposit");
-            var loan = bank.borrow(player, Money.parse("100"), "mysql-bank-loan");
-            bank.repay(player, loan.loanId(), Money.parse("100.06"), "mysql-bank-repay");
+            bank.deposit(player, Money.parse("500"), "mysql-bank-deposit:" + runKey);
+            var loan = bank.borrow(player, Money.parse("100"), "mysql-bank-loan:" + runKey);
+            bank.repay(player, loan.loanId(), Money.parse("100.06"), "mysql-bank-repay:" + runKey);
             assertEquals(Money.parse("500"), bank.playerSnapshot(player).deposit());
             assertEquals(Money.ofMinor(0), bank.playerSnapshot(player).loanDebt());
-            bank.depositAll(allBalancePlayer, "mysql-bank-deposit-all:" + allBalanceKey);
+            bank.depositAll(allBalancePlayer, "mysql-bank-deposit-all:" + runKey);
             assertEquals(Money.ofMinor(0), bank.playerSnapshot(allBalancePlayer).wallet());
             assertEquals(Money.parse("123.45"), bank.playerSnapshot(allBalancePlayer).deposit());
-            bank.withdrawAll(allBalancePlayer, "mysql-bank-withdraw-all:" + allBalanceKey);
+            bank.withdrawAll(allBalancePlayer, "mysql-bank-withdraw-all:" + runKey);
             assertEquals(Money.parse("123.45"), bank.playerSnapshot(allBalancePlayer).wallet());
             assertEquals(Money.ofMinor(0), bank.playerSnapshot(allBalancePlayer).deposit());
         }
         try (MySqlLedgerStore ledger = new MySqlLedgerStore(url, username, password, 4)) {
-            assertEquals(100_000_000L, ledger.monetaryTotals().netSupplyMinor());
+            assertEquals(supplyBefore, ledger.monetaryTotals().netSupplyMinor());
             assertTrue(ledger.verifyIntegrity().valid());
         }
     }

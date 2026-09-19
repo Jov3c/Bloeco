@@ -1,9 +1,6 @@
 package com.blocke.centraleconomy.storage.mysql;
 
 import com.blocke.centraleconomy.storage.redis.RedisEconomyBridge;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -14,10 +11,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import javax.sql.DataSource;
 
 /** Replays committed MySQL outbox rows into Redis Streams; it never writes balances. */
 public final class MySqlOutboxPublisher implements AutoCloseable {
-    private final HikariDataSource dataSource;
+    private final DataSource dataSource;
+    private final AutoCloseable ownedDataSource;
     private final RedisEconomyBridge redis;
     private final ScheduledExecutorService executor;
     private final Consumer<String> warningLogger;
@@ -31,20 +30,20 @@ public final class MySqlOutboxPublisher implements AutoCloseable {
     public MySqlOutboxPublisher(String jdbcUrl, String username, String password,
                                 RedisEconomyBridge redis, Duration interval,
                                 Consumer<String> warningLogger) {
+        this(new BloecoDataSource(jdbcUrl, username, password, 2), redis, interval, warningLogger, true);
+    }
+
+    public MySqlOutboxPublisher(BloecoDataSource dataSource, RedisEconomyBridge redis,
+                                Duration interval, Consumer<String> warningLogger) {
+        this(dataSource, redis, interval, warningLogger, false);
+    }
+
+    private MySqlOutboxPublisher(BloecoDataSource source, RedisEconomyBridge redis,
+                                 Duration interval, Consumer<String> warningLogger, boolean ownsSource) {
         this.redis = redis;
         this.warningLogger = warningLogger == null ? ignored -> { } : warningLogger;
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(jdbcUrl);
-        config.setUsername(username);
-        config.setPassword(password == null ? "" : password);
-        config.setMaximumPoolSize(1);
-        config.setMinimumIdle(1);
-        config.setPoolName("Bloeco-Outbox");
-        config.setConnectionTimeout(5_000);
-        config.setValidationTimeout(2_000);
-        config.setMaxLifetime(1_800_000);
-        config.setKeepaliveTime(120_000);
-        this.dataSource = new HikariDataSource(config);
+        this.dataSource = source.dataSource();
+        this.ownedDataSource = ownsSource ? source : null;
         this.executor = Executors.newSingleThreadScheduledExecutor(task -> {
             Thread thread = new Thread(task, "Bloeco-Redis-Outbox");
             thread.setDaemon(true);
@@ -66,9 +65,9 @@ public final class MySqlOutboxPublisher implements AutoCloseable {
                 while (rows.next() && redis.isAvailable()) {
                     UUID eventId = UUID.fromString(rows.getString("event_id"));
                     String aggregateId = rows.getString("aggregate_id");
-                    redis.publish(eventId.toString(), rows.getString("event_type"), aggregateId,
+                    boolean published = redis.publish(eventId.toString(), rows.getString("event_type"), aggregateId,
                             rows.getString("payload"), rows.getTimestamp("created_at").getTime());
-                    if (!redis.isAvailable()) return;
+                    if (!published) return;
                     try (PreparedStatement mark = connection.prepareStatement("""
                             UPDATE outbox_events SET published_at = UTC_TIMESTAMP(3), attempts = attempts + 1
                             WHERE event_id = ? AND published_at IS NULL
@@ -91,6 +90,9 @@ public final class MySqlOutboxPublisher implements AutoCloseable {
     @Override
     public void close() {
         executor.shutdownNow();
-        dataSource.close();
+        if (ownedDataSource != null) {
+            try { ownedDataSource.close(); }
+            catch (Exception ignored) { }
+        }
     }
 }

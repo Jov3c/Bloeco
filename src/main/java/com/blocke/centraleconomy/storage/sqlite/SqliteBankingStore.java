@@ -34,18 +34,26 @@ public class SqliteBankingStore implements BankingStore {
     private final Clock clock;
     private final boolean mysql;
     private final boolean closeConnection;
+    private final boolean manageTransaction;
     private boolean closed;
 
     public SqliteBankingStore(Path database, Clock clock) {
-        this(open(database), clock, false, true);
+        this(open(database), clock, false, true, true);
     }
 
     /** Internal JDBC session constructor shared by the pooled MySQL adapter. */
     public SqliteBankingStore(Connection connection, Clock clock, boolean mysql, boolean closeConnection) {
+        this(connection, clock, mysql, closeConnection, true);
+    }
+
+    /** Session constructor for callers that own the surrounding transaction. */
+    public SqliteBankingStore(Connection connection, Clock clock, boolean mysql,
+                              boolean closeConnection, boolean manageTransaction) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.connection = Objects.requireNonNull(connection, "connection");
         this.mysql = mysql;
         this.closeConnection = closeConnection;
+        this.manageTransaction = manageTransaction;
         try {
             if (!mysql) {
                 try (Statement statement = connection.createStatement()) {
@@ -472,17 +480,34 @@ public class SqliteBankingStore implements BankingStore {
     }
 
     private void transfer(AccountId source, AccountId destination, long amount) throws SQLException {
-        try (PreparedStatement debit = connection.prepareStatement("""
+        if (mysql) {
+            java.util.List<String> ordered = java.util.stream.Stream.of(source.value(), destination.value())
+                    .distinct().sorted().toList();
+            String placeholders = String.join(",", java.util.Collections.nCopies(ordered.size(), "?"));
+            try (PreparedStatement lock = connection.prepareStatement(
+                    "SELECT account_id FROM account_balances WHERE account_id IN (" + placeholders
+                            + ") ORDER BY account_id FOR UPDATE")) {
+                for (int index = 0; index < ordered.size(); index++) lock.setString(index + 1, ordered.get(index));
+                try (ResultSet ignored = lock.executeQuery()) { while (ignored.next()) { /* acquire locks */ } }
+            }
+        }
+        String debitSql = mysql ? """
+                UPDATE account_balances SET balance_minor=balance_minor-?, version=version+1
+                WHERE account_id=? AND balance_minor>=?
+                """ : """
                 UPDATE account_balances SET balance_minor=balance_minor-?
                 WHERE account_id=? AND balance_minor>=?
-                """)) {
+                """;
+        try (PreparedStatement debit = connection.prepareStatement(debitSql)) {
             debit.setLong(1, amount);
             debit.setString(2, source.value());
             debit.setLong(3, amount);
             if (debit.executeUpdate() != 1) throw insufficient("可用余额不足");
         }
-        try (PreparedStatement credit = connection.prepareStatement(
-                "UPDATE account_balances SET balance_minor=balance_minor+? WHERE account_id=?")) {
+        String creditSql = mysql
+                ? "UPDATE account_balances SET balance_minor=balance_minor+?, version=version+1 WHERE account_id=?"
+                : "UPDATE account_balances SET balance_minor=balance_minor+? WHERE account_id=?";
+        try (PreparedStatement credit = connection.prepareStatement(creditSql)) {
             credit.setLong(1, amount);
             credit.setString(2, destination.value());
             if (credit.executeUpdate() != 1) throw rejected("收款账户不存在");
@@ -593,10 +618,11 @@ public class SqliteBankingStore implements BankingStore {
     }
 
     private long depositBalance(UUID playerId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
+        String sql = """
                 SELECT COALESCE(principal_minor + accrued_interest_minor,0)
                 FROM bank_deposits WHERE bank_id=? AND player_uuid=?
-                """)) {
+                """ + (mysql ? " FOR UPDATE" : "");
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, BANK_ID);
             statement.setString(2, playerId.toString());
             try (ResultSet result = statement.executeQuery()) { return result.next() ? result.getLong(1) : 0L; }
@@ -647,7 +673,7 @@ public class SqliteBankingStore implements BankingStore {
 
     private long balance(AccountId accountId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT balance_minor FROM account_balances WHERE account_id=?")) {
+                "SELECT balance_minor FROM account_balances WHERE account_id=?" + (mysql ? " FOR UPDATE" : ""))) {
             statement.setString(1, accountId.value());
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND, "账户不存在");
@@ -669,6 +695,10 @@ public class SqliteBankingStore implements BankingStore {
 
     private <T> T write(SqlSupplier<T> action) {
         requireOpen();
+        if (!manageTransaction) {
+            try { return action.get(); }
+            catch (SQLException exception) { throw storage("银行事务提交失败", exception); }
+        }
         try {
             connection.setAutoCommit(false);
             T result = action.get();

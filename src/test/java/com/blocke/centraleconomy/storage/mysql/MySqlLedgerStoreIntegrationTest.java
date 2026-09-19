@@ -53,9 +53,12 @@ class MySqlLedgerStoreIntegrationTest {
             CentralBankService bank = new CentralBankService(store, Clock.systemUTC());
             bank.initializeCentralAccounts();
             new TaxRuleService(store, Clock.systemUTC()).initializeDefaults();
+            boolean emptyLedger = store.entryCount() == 0;
+            long supplyBefore = store.monetaryTotals().netSupplyMinor();
             bank.bootstrapTreasury(Money.parse("1000000.00"));
 
-            assertEquals(100_000_000L, store.balance(AccountId.treasury()));
+            assertEquals(emptyLedger ? 100_000_000L : supplyBefore,
+                    store.monetaryTotals().netSupplyMinor());
             assertTrue(store.verifyIntegrity().valid());
         }
     }

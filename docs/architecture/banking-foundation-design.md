@@ -69,7 +69,7 @@ interface TransactionManager {
 
 每次调用从 HikariCP 获取连接，在限定时间内完成事务并归还连接。Repository 接收事务上下文，不自行创建、提交或回滚事务。SQLite 保持单写者实现，但必须满足同一应用契约。
 
-MySQL 写事务统一使用 `READ_COMMITTED`。涉及多个账户时，按 `account_id` 字典序执行 `SELECT ... FOR UPDATE`，防止反向锁顺序。只对 MySQL 错误 `1205` 和 `1213` 进行有限次数、带抖动的整笔事务重试；其他异常失败关闭。
+MySQL 写事务统一使用 `READ_COMMITTED`。涉及多个账户时，按 `account_id` 字典序通过一次 `IN (...) ORDER BY account_id FOR UPDATE` 加锁，防止反向锁顺序。死锁、锁等待超时和连接结果不确定均失败关闭；调用方只能使用同一个幂等键重试，不得猜测成功或换键重放。
 
 幂等键唯一约束是最终裁决。调用方超时后必须使用相同 `institutionId + idempotencyKey` 查询或重试，不能生成新请求。
 
@@ -234,7 +234,7 @@ BloecoApi
 
 MySQL 始终是唯一权威。Redis 仅保存可重建余额、银行概览、净资产读模型和事件流。
 
-Outbox 与业务事务一起写入 MySQL。Publisher 对 Redis Stream 提供至少一次投递，消费者必须按 `event_id` 去重。Publisher 的失败次数、最后错误和积压量需要可观测，不能静默吞掉异常。
+Outbox 与业务事务一起写入 MySQL。Publisher 对 Redis Stream 提供至少一次投递，消费者必须按 `event_id` 去重。Redis 状态为 `AVAILABLE`、`DEGRADED`、`RECONNECTING`，后台每 5–30 秒探测恢复；恢复后 Publisher 自动续发。故障/恢复时间、失败次数和重连次数需要可观测，不能静默吞掉异常。
 
 当前 MySQL Outbox 对全部资金业务统一发布：
 

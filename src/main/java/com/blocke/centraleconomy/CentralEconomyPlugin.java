@@ -60,10 +60,6 @@ public class CentralEconomyPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (runtime != null) {
-            runtime.close();
-            runtime = null;
-        }
         if (outboxPublisher != null) {
             outboxPublisher.close();
             outboxPublisher = null;
@@ -71,6 +67,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
         if (redisBridge != null) {
             redisBridge.close();
             redisBridge = null;
+        }
+        if (runtime != null) {
+            runtime.close();
+            runtime = null;
         }
     }
 
@@ -123,7 +123,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 treasury.minor(), playerBalance.minor(), bankCapital.minor(),
                 0, 0, 0,
                 bankPolicy.depositRateBasisPoints(), bankPolicy.loanRateBasisPoints(),
-                bankPolicy.reserveRatioBasisPoints(), bankPolicy.maximumLoan().minor());
+                bankPolicy.reserveRatioBasisPoints(), bankPolicy.maximumLoan().minor(),
+                bankPolicy.loanTermDays(),
+                getConfig().getLong("integrity.check-interval-minutes", 15L),
+                getConfig().getLong("redis.reconnect-interval-seconds", 10L));
         var errors = ConfigurationValidator.validate(snapshot);
         if (!errors.isEmpty()) {
             throw new IllegalArgumentException("配置校验失败：" + String.join("；", errors));
@@ -152,13 +155,15 @@ public class CentralEconomyPlugin extends JavaPlugin {
                     getConfig().getString("redis.uri", "redis://127.0.0.1:6379/0"),
                     getConfig().getString("redis.key-prefix", "bloeco:v2:"),
                     getConfig().getString("redis.stream", "bloeco:v2:ledger-events"),
-                    getConfig().getLong("redis.cache-ttl-seconds", 60L));
-            getLogger().info("Redis accelerator connected; MySQL remains the ledger authority.");
+                    getConfig().getLong("redis.cache-ttl-seconds", 60L),
+                    getConfig().getLong("redis.reconnect-interval-seconds", 10L));
+            if (redisBridge.isAvailable()) {
+                getLogger().info("Redis accelerator connected; MySQL remains the ledger authority.");
+            } else {
+                getLogger().warning("Redis unavailable; Bloeco will reconnect automatically while MySQL remains available.");
+            }
             if ("mysql".equalsIgnoreCase(storageType)) {
-                String jdbcUrl = getConfig().getString("storage.mysql.jdbc-url");
-                String username = getConfig().getString("storage.mysql.username");
-                String password = resolveSecret("storage.mysql.password", "storage.mysql.password-env");
-                outboxPublisher = new MySqlOutboxPublisher(jdbcUrl, username, password,
+                outboxPublisher = runtime.createOutboxPublisher(
                         redisBridge, Duration.ofSeconds(2), getLogger()::warning);
             }
         } catch (RuntimeException exception) {

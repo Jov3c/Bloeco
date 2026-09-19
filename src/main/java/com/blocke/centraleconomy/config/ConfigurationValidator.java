@@ -18,16 +18,24 @@ public final class ConfigurationValidator {
             errors.add("storage.type 必须是 mysql 或 sqlite。");
         }
         if (storage.equals("mysql")) {
-            if (blank(config.mysqlJdbcUrl())) errors.add("MySQL JDBC 地址不能为空。");
+            if (blank(config.mysqlJdbcUrl()) || !config.mysqlJdbcUrl().startsWith("jdbc:mysql:")) {
+                errors.add("MySQL JDBC 地址必须以 jdbc:mysql: 开头。");
+            }
             if (blank(config.mysqlUsername())) errors.add("MySQL 用户名不能为空。");
             if (config.mysqlPoolSize() < 2 || config.mysqlPoolSize() > 128) {
                 errors.add("MySQL 连接池大小必须在 2 到 128 之间。");
             }
         }
         if (config.redisEnabled()) {
-            if (blank(config.redisUri())) errors.add("Redis 地址不能为空。");
+            if (blank(config.redisUri()) || (!config.redisUri().startsWith("redis://")
+                    && !config.redisUri().startsWith("rediss://"))) {
+                errors.add("Redis 地址必须以 redis:// 或 rediss:// 开头。");
+            }
             if (config.redisTtlSeconds() < 1 || config.redisTtlSeconds() > 86_400) {
                 errors.add("Redis 缓存 TTL 必须在 1 到 86400 秒之间。");
+            }
+            if (config.redisReconnectSeconds() < 5 || config.redisReconnectSeconds() > 30) {
+                errors.add("Redis 重连间隔必须在 5 到 30 秒之间。");
             }
         }
         if (config.treasuryInitialMinor() <= 0 || config.playerInitialMinor() <= 0
@@ -43,6 +51,12 @@ public final class ConfigurationValidator {
                 errors.add("税费和利率基点必须在 0 到 10000 之间。");
                 break;
             }
+        }
+        if (config.loanTermDays() < 1 || config.loanTermDays() > 3650) {
+            errors.add("贷款期限必须在 1 到 3650 天之间。");
+        }
+        if (config.integrityIntervalMinutes() < 1 || config.integrityIntervalMinutes() > 1440) {
+            errors.add("完整性检查间隔必须在 1 到 1440 分钟之间。");
         }
         return List.copyOf(errors);
     }

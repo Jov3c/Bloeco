@@ -9,39 +9,38 @@ import com.blocke.centraleconomy.domain.banking.LoanReceipt;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import java.sql.Connection;
-import java.sql.SQLException;
+import com.blocke.centraleconomy.storage.mysql.repository.BankRepository;
 import java.time.Clock;
 import java.util.Objects;
 import java.util.UUID;
+import javax.sql.DataSource;
 
 /** Pooled MySQL banking adapter; every call owns one short database transaction. */
 public final class MySqlBankingStore implements BankingStore {
-    private final HikariDataSource dataSource;
-    private final Clock clock;
+    private final DataSource dataSource;
+    private final MySqlTransactionManager transactions;
+    private final AutoCloseable ownedDataSource;
+    private final BankRepository bankRepository;
 
     public MySqlBankingStore(String jdbcUrl, String username, String password, int maximumPoolSize, Clock clock) {
-        this.clock = Objects.requireNonNull(clock, "clock");
-        HikariConfig config = new HikariConfig();
-        config.setJdbcUrl(jdbcUrl);
-        config.setUsername(username);
-        config.setPassword(password == null ? "" : password);
-        config.setMaximumPoolSize(Math.max(2, maximumPoolSize));
-        config.setMinimumIdle(Math.min(2, Math.max(1, maximumPoolSize)));
-        config.setPoolName("Bloeco-Banking-MySQL");
-        config.setConnectionTimeout(5_000);
-        config.setValidationTimeout(2_000);
-        config.setMaxLifetime(1_800_000);
-        config.setKeepaliveTime(120_000);
-        dataSource = new HikariDataSource(config);
-        try (Connection connection = dataSource.getConnection()) {
-            MySqlSchema.apply(connection);
-        } catch (SQLException exception) {
-            dataSource.close();
-            throw storage(exception);
-        }
+        this(new BloecoDataSource(jdbcUrl, username, password, maximumPoolSize), clock);
+    }
+
+    private MySqlBankingStore(BloecoDataSource ownedDataSource, Clock clock) {
+        this(ownedDataSource, new MySqlTransactionManager(ownedDataSource.dataSource()), clock, ownedDataSource);
+    }
+
+    public MySqlBankingStore(BloecoDataSource sharedDataSource, MySqlTransactionManager transactions, Clock clock) {
+        this(sharedDataSource, transactions, clock, null);
+    }
+
+    private MySqlBankingStore(BloecoDataSource source, MySqlTransactionManager transactions,
+                              Clock clock, AutoCloseable ownedDataSource) {
+        this.bankRepository = new BankRepository(Objects.requireNonNull(clock, "clock"));
+        this.dataSource = Objects.requireNonNull(source, "source").dataSource();
+        this.transactions = Objects.requireNonNull(transactions, "transactions");
+        this.ownedDataSource = ownedDataSource;
+        MySqlMigrations.migrate(dataSource, transactions);
     }
 
     @Override public void initialize(Money capital, BankingPolicy defaults) {
@@ -74,17 +73,18 @@ public final class MySqlBankingStore implements BankingStore {
     }
 
     private <T> T call(Work<T> work) {
-        try (Connection connection = dataSource.getConnection()) {
-            connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
-            try (SqliteBankingStore session = new SqliteBankingStore(connection, clock, true, false)) {
+        return transactions.execute(connection -> {
+            try (SqliteBankingStore session = bankRepository.session(connection)) {
                 return work.apply(session);
             }
-        } catch (SQLException exception) {
-            throw storage(exception);
-        }
+        });
     }
 
-    @Override public void close() { dataSource.close(); }
+    @Override public void close() {
+        if (ownedDataSource == null) return;
+        try { ownedDataSource.close(); }
+        catch (Exception exception) { throw storage(exception); }
+    }
 
     private static LedgerException storage(Exception cause) {
         return new LedgerException(LedgerException.Code.STORAGE_UNAVAILABLE, "MySQL 银行账本暂时不可用", cause);

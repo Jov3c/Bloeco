@@ -18,5 +18,8 @@ public record ConfigurationSnapshot(
         int depositRateBps,
         int loanRateBps,
         int reserveRatioBps,
-        long maximumLoanMinor) {
+        long maximumLoanMinor,
+        int loanTermDays,
+        long integrityIntervalMinutes,
+        long redisReconnectSeconds) {
 }

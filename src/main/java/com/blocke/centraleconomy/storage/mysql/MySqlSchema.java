@@ -6,7 +6,6 @@ import java.sql.Statement;
 
 /** Creates and upgrades the authoritative MySQL/InnoDB ledger schema. */
 final class MySqlSchema {
-    static final int VERSION = 5;
 
     private MySqlSchema() {}
 
@@ -316,8 +315,6 @@ final class MySqlSchema {
             createIndexIfMissing(statement, "CREATE INDEX ix_tax_category_effective ON tax_rules(category, effective_from_epoch_ms, effective_until_epoch_ms)");
             createIndexIfMissing(statement, "CREATE INDEX ix_audit_created ON audit_events(created_at_epoch_ms)");
             createIndexIfMissing(statement, "CREATE INDEX ix_loan_payments_loan_paid ON bank_loan_payments(loan_id, paid_at_epoch_ms)");
-            statement.executeUpdate("INSERT IGNORE INTO schema_history(version, applied_at) VALUES ("
-                    + VERSION + ", UTC_TIMESTAMP(3))");
         }
     }
 

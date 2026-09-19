@@ -5,6 +5,7 @@ import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
 import com.blocke.centraleconomy.domain.ledger.JournalType;
+import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.ledger.Posting;
 import java.sql.DriverManager;
 import java.time.Clock;
@@ -103,8 +104,79 @@ class MySqlConcurrencyStressTest {
                 assertEquals(INITIAL_BALANCE_MINOR * WORKERS, total);
                 assertTrue(verifier.verifyIntegrity().valid(), "materialized balances must match all postings");
             }
+
+            sameWalletCannotBeDebitedTwice(url, username, password, accounts.get(0).id(), accounts.get(1).id());
+            oppositeTransfersUseTheSameLockOrder(url, username, password,
+                    accounts.get(2).id(), accounts.get(3).id());
+
+            try (MySqlLedgerStore verifier = new MySqlLedgerStore(url, username, password, 2)) {
+                assertEquals(25_000L, verifier.balance(accounts.get(0).id()));
+                assertEquals(175_000L, verifier.balance(accounts.get(1).id()));
+                assertEquals(INITIAL_BALANCE_MINOR, verifier.balance(accounts.get(2).id()));
+                assertEquals(INITIAL_BALANCE_MINOR, verifier.balance(accounts.get(3).id()));
+                assertTrue(verifier.verifyIntegrity().valid());
+            }
         } finally {
             cleanup(url, username, password, accounts, treasuryBefore);
+        }
+    }
+
+    private static void sameWalletCannotBeDebitedTwice(String url, String username, String password,
+                                                        AccountId source, AccountId destination) throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            List<Future<Boolean>> attempts = new ArrayList<>();
+            for (int index = 0; index < 2; index++) {
+                int operation = index;
+                attempts.add(executor.submit(() -> {
+                    try (MySqlLedgerStore store = new MySqlLedgerStore(url, username, password, 2)) {
+                        ready.countDown();
+                        start.await(10, TimeUnit.SECONDS);
+                        store.commit(JournalEntry.create(UUID.randomUUID(), JournalType.PLAYER_TRANSFER,
+                                "并发双重扣款测试", CLIENT_ID, "double-debit-" + operation,
+                                Instant.now(), List.of(new Posting(source, -75_000L),
+                                        new Posting(destination, 75_000L))));
+                        return true;
+                    } catch (LedgerException failure) {
+                        if (failure.code() != LedgerException.Code.INSUFFICIENT_FUNDS) throw failure;
+                        return false;
+                    }
+                }));
+            }
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            int successes = 0;
+            for (Future<Boolean> attempt : attempts) if (attempt.get(20, TimeUnit.SECONDS)) successes++;
+            assertEquals(1, successes, "only one debit may observe sufficient funds");
+        }
+    }
+
+    private static void oppositeTransfersUseTheSameLockOrder(String url, String username, String password,
+                                                              AccountId first, AccountId second) throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            List<Future<Boolean>> attempts = new ArrayList<>();
+            for (int index = 0; index < 2; index++) {
+                AccountId source = index == 0 ? first : second;
+                AccountId destination = index == 0 ? second : first;
+                int operation = index;
+                attempts.add(executor.submit(() -> {
+                    try (MySqlLedgerStore store = new MySqlLedgerStore(url, username, password, 2)) {
+                        ready.countDown();
+                        start.await(10, TimeUnit.SECONDS);
+                        store.commit(JournalEntry.create(UUID.randomUUID(), JournalType.PLAYER_TRANSFER,
+                                "反向锁顺序测试", CLIENT_ID, "opposite-" + operation,
+                                Instant.now(), List.of(new Posting(source, -1L),
+                                        new Posting(destination, 1L))));
+                        return true;
+                    }
+                }));
+            }
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+            for (Future<Boolean> attempt : attempts) assertTrue(attempt.get(20, TimeUnit.SECONDS));
         }
     }
 

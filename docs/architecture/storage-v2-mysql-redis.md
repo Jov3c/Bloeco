@@ -43,23 +43,26 @@
 
 ## 4. 事务与并发规则
 
-1. 读取余额时只用于展示；写入前在同一 MySQL 事务内按 `account_id` 排序 `SELECT ... FOR UPDATE`。
+Runtime 只创建一个 `BloecoDataSource`。Ledger、Banking 与 Outbox 共享该 HikariCP 池；池的关闭权只属于 Runtime。所有业务写入由 `MySqlTransactionManager` 获取一个短生命周期连接，Repository 只执行 SQL，不得自行提交、回滚或创建连接池。
+
+1. 读取余额时只用于展示；写入前在同一 MySQL 事务内按 `account_id` 排序，并通过一次 `IN (...) ORDER BY account_id FOR UPDATE` 统一加锁。
 2. 校验账户状态、负余额策略、税费和手续费规则后，写入 journal、postings、account_balances、settlement 快照、audit 和 outbox。
 3. 所有写入使用唯一幂等键；重试必须返回原结算结果，参数指纹不一致时返回冲突。
 4. 发行必须经过申请→批准→执行；国库资金只能通过已批准的发行/回收流程变化。初始国库资金属于初始化配置，不是每次启动重新铸币。
 5. Redis 事件消费端必须支持至少一次投递和幂等处理，业务插件不得把 Redis 消息当作余额确认。
 6. 银行放款和取款必须在提交事务内重新检查 `bank:cash`、存款负债、准备金率、单人贷款上限和放贷开关；GUI 快照不能替代提交校验。
 7. “全部存入”和“全部取出”必须在银行写事务中读取并锁定当前钱包或存款余额，再以该金额完成分录和幂等记录；不得先在 GUI 查询金额后作为固定数值提交。
+8. `account_balances.version` 从 0 开始，每次余额更新原子递增；当前用于变更检测和后续缓存一致性，不替代行锁。
 
 ## 5. Redis 使用规范
 
 - Key 前缀默认 `bloeco:v2:`，余额缓存、快照缓存均设置 TTL，并带账本版本号。
 - Stream 默认 `bloeco:v2:ledger-events`；事件载荷包含 `event_id`、`journal_id`、`scope_key`、`created_at` 和 schema 版本。
 - 缓存失效优先于更新；任何缓存命中都必须能够从 MySQL 重新构建。
-- Redis 连接失败只记录健康状态并继续保证 MySQL 账本；发布器恢复后从 `outbox_events` 的未发布位置继续。
-- Redis bridge 将缓存/Stream 异常降级为不可用状态，并记录故障次数和最近故障时间；这类异常不会向玩家转账或银行事务抛出，也不会标记 outbox 事件为已发布。后台发布失败日志限频，避免 Redis 故障时刷屏。
+- Redis 连接失败进入 `DEGRADED`，后台按配置的 5–30 秒间隔进入 `RECONNECTING` 并探测；成功后回到 `AVAILABLE`。发布器随后自动从 `outbox_events` 未发布位置继续，无需重启插件。
+- Redis bridge 记录 `redis_available`、`failure_count`、`last_failure_time`、`last_recovery_time` 和 `reconnect_attempts`；这类异常不会向玩家转账或银行事务抛出，也不会标记 outbox 事件为已发布。后台发布失败日志限频，避免 Redis 故障时刷屏。
 - MySQL 连接池设置 5 秒获取超时、2 秒验证超时、30 分钟最大生命周期和 2 分钟保活；SQLite 使用 WAL、`foreign_keys=ON`、5 秒 `busy_timeout`、`synchronous=FULL` 与 `temp_store=MEMORY`。
-- schema 版本 5（SQLite 版本 4）为账单时间、账单类型、分录账户、税则生效期、审计时间和银行还款时间建立索引；索引迁移可重复执行。
+- MySQL 使用不可变 V001-V006 迁移链，V006 增加余额版本列；每个成功版本单独写入 `schema_history`，历史断档或迁移失败会阻止启动。SQLite 版本 4 继续用于开发/导入模式。
 
 ## 6. 配置基线
 
@@ -69,7 +72,7 @@
 storage:
   type: mysql
   mysql:
-    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&serverTimezone=UTC
+    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
     maximum-pool-size: 16
@@ -77,6 +80,7 @@ redis:
   enabled: true
   uri: redis://127.0.0.1:6379/0
   key-prefix: bloeco:v2:
+  reconnect-interval-seconds: 10
 bank:
   initial-capital: "250000.00"
   deposit-rate-bps: 100
@@ -89,7 +93,7 @@ bank:
 
 SQLite 仅用于开发、离线测试和迁移工具，必须显式设置 `storage.type: sqlite`。生产环境禁止把 SQLite 当作 MySQL 故障转移目标。
 
-配置校验会在创建数据库连接前拒绝未知存储类型、缺少 MySQL 地址/用户、非法 Redis TTL、非正初始资金、非法贷款上限和超出 0–10000 的基点。Redis 可以通过 `redis.enabled: false` 关闭；关闭后不影响 MySQL 核心账本。
+配置校验会在创建数据库连接前拒绝未知存储类型、非法 JDBC/Redis 地址、连接池越界、非法 Redis TTL/重连间隔、非法贷款期限/完整性检查间隔、非正初始资金、非法贷款上限和超出 0–10000 的基点。Redis 可以通过 `redis.enabled: false` 关闭；关闭后不影响 MySQL 核心账本。
 
 ## 7. 插件接入契约
 
