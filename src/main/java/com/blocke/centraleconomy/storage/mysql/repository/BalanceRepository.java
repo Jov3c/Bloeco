@@ -20,7 +20,7 @@ public final class BalanceRepository {
         List<AccountId> ordered = accountIds.stream().distinct().sorted().toList();
         String placeholders = String.join(",", Collections.nCopies(ordered.size(), "?"));
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT a.account_id, a.status, a.permits_negative, b.balance_minor, b.version
+                SELECT a.account_id, a.status, a.permits_negative, b.balance_minor, b.reserved_minor, b.version
                 FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
                 WHERE a.account_id IN (%s)
                 ORDER BY a.account_id
@@ -33,7 +33,7 @@ public final class BalanceRepository {
                 while (row.next()) {
                     AccountId id = new AccountId(row.getString(1));
                     result.put(id, new StoredAccount(row.getString(2), row.getInt(3) == 1,
-                            row.getLong(4), row.getLong(5)));
+                            row.getLong(4), row.getLong(5), row.getLong(6)));
                 }
             }
         }
@@ -52,5 +52,17 @@ public final class BalanceRepository {
         }
     }
 
-    public record StoredAccount(String status, boolean permitsNegative, long balance, long version) { }
+    public void updateReserved(Connection connection, AccountId accountId, long reserved) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "UPDATE account_balances SET reserved_minor=?,version=version+1 WHERE account_id=?")) {
+            statement.setLong(1, reserved);
+            statement.setString(2, accountId.value());
+            if (statement.executeUpdate() != 1) throw new SQLException("balance account does not exist");
+        }
+    }
+
+    public record StoredAccount(
+            String status, boolean permitsNegative, long balance, long reserved, long version) {
+        public long available() { return Math.subtractExact(balance, reserved); }
+    }
 }

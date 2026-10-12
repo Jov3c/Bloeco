@@ -20,13 +20,13 @@ class MigrationRunnerTest {
     void emptyDatabaseRunsEveryMigrationOnce() throws Exception {
         SQLiteDataSource source = memorySource("empty");
         List<Integer> applied = new ArrayList<>();
-        List<Migration> migrations = migrations(1, 6, applied);
+        List<Migration> migrations = migrations(1, 7, applied);
 
         new MigrationRunner(source, new MySqlTransactionManager(source), migrations).migrate();
         new MigrationRunner(source, new MySqlTransactionManager(source), migrations).migrate();
 
-        assertEquals(List.of(1, 2, 3, 4, 5, 6), applied);
-        assertEquals(6, currentVersion(source));
+        assertEquals(List.of(1, 2, 3, 4, 5, 6, 7), applied);
+        assertEquals(7, currentVersion(source));
     }
 
     @Test
@@ -35,10 +35,10 @@ class MigrationRunnerTest {
         seedHistory(source, 4);
         List<Integer> applied = new ArrayList<>();
 
-        new MigrationRunner(source, new MySqlTransactionManager(source), migrations(1, 6, applied)).migrate();
+        new MigrationRunner(source, new MySqlTransactionManager(source), migrations(1, 7, applied)).migrate();
 
-        assertEquals(List.of(5, 6), applied);
-        assertEquals(6, currentVersion(source));
+        assertEquals(List.of(5, 6, 7), applied);
+        assertEquals(7, currentVersion(source));
     }
 
     @Test
@@ -47,9 +47,9 @@ class MigrationRunnerTest {
         seedHistory(source, 5);
         List<Integer> applied = new ArrayList<>();
 
-        new MigrationRunner(source, new MySqlTransactionManager(source), migrations(1, 6, applied)).migrate();
+        new MigrationRunner(source, new MySqlTransactionManager(source), migrations(1, 7, applied)).migrate();
 
-        assertEquals(List.of(6), applied);
+        assertEquals(List.of(6, 7), applied);
     }
 
     @Test

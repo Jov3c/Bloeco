@@ -696,7 +696,7 @@ public final class MySqlLedgerStore implements LedgerStore {
                 throw new LedgerException(LedgerException.Code.INVALID_AMOUNT,
                         "account balance exceeds the supported range", exception);
             }
-            if (!account.permitsNegative() && updated < 0) {
+            if (!account.permitsNegative() && Math.subtractExact(updated, account.reserved()) < 0) {
                 throw new LedgerException(LedgerException.Code.INSUFFICIENT_FUNDS,
                         "account has insufficient funds: " + delta.getKey().value());
             }
