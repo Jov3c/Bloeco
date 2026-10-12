@@ -4,6 +4,7 @@ import com.blocke.bloeco.api.InstitutionCapability;
 import com.blocke.centraleconomy.application.integration.EcosystemStore;
 import com.blocke.centraleconomy.application.integration.InstitutionRecord;
 import com.blocke.centraleconomy.application.integration.SettlementRecord;
+import com.blocke.centraleconomy.application.integration.ReservationRecord;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.money.Money;
@@ -248,6 +249,170 @@ public final class SqliteEcosystemStore implements EcosystemStore {
         }
     }
 
+    @Override
+    public synchronized long reservedBalance(UUID playerId) {
+        return balanceColumn(AccountId.player(playerId), "reserved_minor");
+    }
+
+    @Override
+    public synchronized long availableBalance(UUID playerId) {
+        AccountId account = AccountId.player(playerId);
+        return Math.subtractExact(balanceColumn(account, "balance_minor"),
+                balanceColumn(account, "reserved_minor"));
+    }
+
+    @Override
+    public synchronized ReservationRecord reserve(ReservationCommand command) {
+        requireOpen();
+        try {
+            beginImmediate();
+            Optional<ReservationRecord> replay = reservationByKey(command.clientId(), command.idempotencyKey());
+            if (replay.isPresent()) {
+                if (!replay.get().fingerprint().equals(command.fingerprint())) throw new LedgerException(
+                        LedgerException.Code.IDEMPOTENCY_CONFLICT, "reservation key conflicts with another request");
+                commit();
+                return replay.get();
+            }
+            long total = Math.addExact(command.principal().minor(), command.tax().minor());
+            AccountId player = AccountId.player(command.playerId());
+            long balance = balanceColumn(player, "balance_minor");
+            long reserved = balanceColumn(player, "reserved_minor");
+            if (Math.subtractExact(balance, reserved) < total) throw new LedgerException(
+                    LedgerException.Code.INSUFFICIENT_FUNDS, "player has insufficient available funds");
+            setReserved(player, Math.addExact(reserved, total));
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO fund_reservations(reservation_id,institution_id,player_uuid,principal_minor,
+                        tax_minor,tax_rule_version,status,expires_at_epoch_ms,created_at_epoch_ms,
+                        updated_at_epoch_ms,reserve_idempotency_key,reserve_fingerprint)
+                    VALUES (?,?,?,?,?,?,'ACTIVE',?,?,?,?,?)
+                    """)) {
+                statement.setString(1, command.reservationId().toString());
+                statement.setString(2, command.clientId());
+                statement.setString(3, command.playerId().toString());
+                statement.setLong(4, command.principal().minor());
+                statement.setLong(5, command.tax().minor());
+                statement.setString(6, command.taxRuleVersion().toString());
+                statement.setLong(7, command.expiresAt().toEpochMilli());
+                statement.setLong(8, command.createdAt().toEpochMilli());
+                statement.setLong(9, command.createdAt().toEpochMilli());
+                statement.setString(10, command.idempotencyKey());
+                statement.setString(11, command.fingerprint());
+                statement.executeUpdate();
+            }
+            ReservationRecord result = reservationRow(command.reservationId()).orElseThrow();
+            commit();
+            return result;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to reserve player funds", exception);
+        }
+    }
+
+    @Override
+    public synchronized SettlementRecord capture(CaptureCommand command) {
+        requireOpen();
+        try {
+            beginImmediate();
+            Optional<SettlementRecord> replay = findOperation(command.clientId(), command.idempotencyKey());
+            if (replay.isPresent()) {
+                requireMatchingFingerprint(replay.get(), command.fingerprint());
+                commit();
+                return replay.get();
+            }
+            ReservationRecord reservation = activeReservation(command.clientId(), command.reservationId(),
+                    command.committedAt());
+            requireOwnedAccount(command.clientId(), command.institutionAccountId());
+            long total = reservation.reservedTotal().minor();
+            AccountId player = AccountId.player(reservation.playerId());
+            setReserved(player, Math.subtractExact(balanceColumn(player, "reserved_minor"), total));
+            List<BalanceDelta> deltas = new ArrayList<>();
+            deltas.add(new BalanceDelta(player, -total));
+            deltas.add(new BalanceDelta(command.institutionAccountId(), reservation.principal().minor()));
+            addIfNonZero(deltas, AccountId.taxRevenue(), reservation.tax().minor());
+            applyJournal(command.journalId(), command.clientId(), command.idempotencyKey(), command.displayMemo(),
+                    command.committedAt(), deltas);
+            SettlementRecord result = new SettlementRecord(command.operationId(), command.journalId(),
+                    command.clientId(), SettlementRecord.Type.CHARGE,
+                    com.blocke.bloeco.api.SettlementKind.PURCHASE, reservation.playerId(),
+                    command.institutionAccountId(), reservation.principal(), reservation.tax(), Money.ofMinor(0),
+                    reservation.principal(), command.businessType(), command.businessReference(),
+                    command.displayMemo(), command.idempotencyKey(), command.fingerprint(), command.committedAt(),
+                    null, reservation.taxRuleVersion());
+            insertOperation(result);
+            updateReservationStatus(command.reservationId(), ReservationRecord.Status.CAPTURED,
+                    command.committedAt(), command.operationId());
+            commit();
+            return result;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to capture player funds", exception);
+        }
+    }
+
+    @Override
+    public synchronized ReservationRecord release(ReservationTransition command) {
+        requireOpen();
+        try {
+            beginImmediate();
+            ReservationRecord record = reservationRow(command.reservationId()).orElseThrow(() ->
+                    new LedgerException(LedgerException.Code.INVALID_JOURNAL, "reservation does not exist"));
+            if (!record.clientId().equals(command.clientId())) throw new LedgerException(
+                    LedgerException.Code.UNAUTHORIZED, "reservation is not owned by caller");
+            ReleaseIdentity previous = releaseIdentity(command.reservationId());
+            if (previous.key() != null) {
+                if (!previous.key().equals(command.idempotencyKey())
+                        || !previous.fingerprint().equals(command.fingerprint())) throw new LedgerException(
+                        LedgerException.Code.IDEMPOTENCY_CONFLICT, "release key conflicts with prior request");
+                commit();
+                return record;
+            }
+            record = expireIfNeeded(record, command.transitionedAt());
+            if (record.status() != ReservationRecord.Status.ACTIVE) throw new LedgerException(
+                    LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
+            releaseReserved(record);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE fund_reservations SET status='RELEASED',updated_at_epoch_ms=?,
+                        release_idempotency_key=?,release_fingerprint=? WHERE reservation_id=? AND status='ACTIVE'
+                    """)) {
+                statement.setLong(1, command.transitionedAt().toEpochMilli());
+                statement.setString(2, command.idempotencyKey());
+                statement.setString(3, command.fingerprint());
+                statement.setString(4, command.reservationId().toString());
+                if (statement.executeUpdate() != 1) throw new LedgerException(
+                        LedgerException.Code.POLICY_REJECTED, "reservation changed during release");
+            }
+            ReservationRecord result = reservationRow(command.reservationId()).orElseThrow();
+            commit();
+            return result;
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to release player funds", exception);
+        }
+    }
+
+    @Override
+    public synchronized Optional<ReservationRecord> reservation(String clientId, UUID reservationId, Instant now) {
+        requireOpen();
+        try {
+            beginImmediate();
+            Optional<ReservationRecord> found = reservationRow(reservationId);
+            if (found.isEmpty() || !found.get().clientId().equals(clientId)) {
+                commit();
+                return Optional.empty();
+            }
+            ReservationRecord result = expireIfNeeded(found.get(), now);
+            commit();
+            return Optional.of(result);
+        } catch (SQLException | RuntimeException exception) {
+            rollback();
+            if (exception instanceof LedgerException ledgerException) throw ledgerException;
+            throw storageFailure("unable to read reservation", exception);
+        }
+    }
+
     private void insertInstitution(InstitutionRegistration registration) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO institutions(institution_id,display_name,plugin_name,plugin_main_class,
@@ -360,6 +525,123 @@ public final class SqliteEcosystemStore implements EcosystemStore {
         }
     }
 
+    private Optional<ReservationRecord> reservationByKey(String clientId, String key) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM fund_reservations WHERE institution_id=? AND reserve_idempotency_key=?")) {
+            statement.setString(1, clientId);
+            statement.setString(2, key);
+            try (ResultSet row = statement.executeQuery()) {
+                return row.next() ? Optional.of(readReservation(row)) : Optional.empty();
+            }
+        }
+    }
+
+    private Optional<ReservationRecord> reservationRow(UUID id) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT * FROM fund_reservations WHERE reservation_id=?")) {
+            statement.setString(1, id.toString());
+            try (ResultSet row = statement.executeQuery()) {
+                return row.next() ? Optional.of(readReservation(row)) : Optional.empty();
+            }
+        }
+    }
+
+    private static ReservationRecord readReservation(ResultSet row) throws SQLException {
+        return new ReservationRecord(UUID.fromString(row.getString("reservation_id")),
+                row.getString("institution_id"), UUID.fromString(row.getString("player_uuid")),
+                Money.ofMinor(row.getLong("principal_minor")), Money.ofMinor(row.getLong("tax_minor")),
+                UUID.fromString(row.getString("tax_rule_version")),
+                ReservationRecord.Status.valueOf(row.getString("status")),
+                Instant.ofEpochMilli(row.getLong("expires_at_epoch_ms")),
+                Instant.ofEpochMilli(row.getLong("created_at_epoch_ms")),
+                Instant.ofEpochMilli(row.getLong("updated_at_epoch_ms")),
+                row.getString("reserve_idempotency_key"), row.getString("reserve_fingerprint"));
+    }
+
+    private ReservationRecord activeReservation(String clientId, UUID id, Instant now) throws SQLException {
+        ReservationRecord record = reservationRow(id).orElseThrow(() ->
+                new LedgerException(LedgerException.Code.INVALID_JOURNAL, "reservation does not exist"));
+        if (!record.clientId().equals(clientId)) throw new LedgerException(
+                LedgerException.Code.UNAUTHORIZED, "reservation is not owned by caller");
+        record = expireIfNeeded(record, now);
+        if (record.status() != ReservationRecord.Status.ACTIVE) {
+            if (record.status() == ReservationRecord.Status.EXPIRED) commit();
+            throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
+                    "reservation is no longer active");
+        }
+        return record;
+    }
+
+    private ReservationRecord expireIfNeeded(ReservationRecord record, Instant now) throws SQLException {
+        if (record.status() == ReservationRecord.Status.ACTIVE && !record.expiresAt().isAfter(now)) {
+            releaseReserved(record);
+            updateReservationStatus(record.reservationId(), ReservationRecord.Status.EXPIRED, now, null);
+            return reservationRow(record.reservationId()).orElseThrow();
+        }
+        return record;
+    }
+
+    private void releaseReserved(ReservationRecord record) throws SQLException {
+        AccountId player = AccountId.player(record.playerId());
+        long current = balanceColumn(player, "reserved_minor");
+        setReserved(player, Math.subtractExact(current, record.reservedTotal().minor()));
+    }
+
+    private void updateReservationStatus(UUID id, ReservationRecord.Status status, Instant at,
+                                         UUID captureOperationId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE fund_reservations SET status=?,updated_at_epoch_ms=?,capture_operation_id=?
+                WHERE reservation_id=? AND status='ACTIVE'
+                """)) {
+            statement.setString(1, status.name());
+            statement.setLong(2, at.toEpochMilli());
+            statement.setString(3, captureOperationId == null ? null : captureOperationId.toString());
+            statement.setString(4, id.toString());
+            if (statement.executeUpdate() != 1) throw new LedgerException(
+                    LedgerException.Code.POLICY_REJECTED, "reservation changed during transition");
+        }
+    }
+
+    private ReleaseIdentity releaseIdentity(UUID id) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT release_idempotency_key,release_fingerprint FROM fund_reservations WHERE reservation_id=?")) {
+            statement.setString(1, id.toString());
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) return new ReleaseIdentity(null, null);
+                return new ReleaseIdentity(row.getString(1), row.getString(2));
+            }
+        }
+    }
+
+    private long balanceColumn(AccountId accountId, String column) {
+        if (!column.equals("balance_minor") && !column.equals("reserved_minor")) {
+            throw new IllegalArgumentException("unsupported balance column");
+        }
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT " + column + " FROM account_balances WHERE account_id=?")) {
+            statement.setString(1, accountId.value());
+            try (ResultSet row = statement.executeQuery()) {
+                if (!row.next()) throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND,
+                        "account does not exist: " + accountId.value());
+                return row.getLong(1);
+            }
+        } catch (SQLException exception) {
+            throw storageFailure("unable to read balance", exception);
+        }
+    }
+
+    private void setReserved(AccountId accountId, long reserved) throws SQLException {
+        if (reserved < 0) throw new LedgerException(LedgerException.Code.INTEGRITY_FAILURE,
+                "reserved balance would become negative");
+        try (PreparedStatement statement = connection.prepareStatement(
+                "UPDATE account_balances SET reserved_minor=? WHERE account_id=?")) {
+            statement.setLong(1, reserved);
+            statement.setString(2, accountId.value());
+            if (statement.executeUpdate() != 1) throw new LedgerException(
+                    LedgerException.Code.ACCOUNT_NOT_FOUND, "account does not exist: " + accountId.value());
+        }
+    }
+
     private SettlementRecord readOperation(ResultSet row) throws SQLException {
         String original = row.getString("original_operation_id");
         String taxRule = row.getString("tax_rule_version");
@@ -422,7 +704,7 @@ public final class SqliteEcosystemStore implements EcosystemStore {
         Map<AccountId, Long> updated = new HashMap<>();
         for (Map.Entry<AccountId, Long> delta : deltas.entrySet()) {
             try (PreparedStatement statement = connection.prepareStatement("""
-                    SELECT a.status,a.permits_negative,b.balance_minor
+                    SELECT a.status,a.permits_negative,b.balance_minor,b.reserved_minor
                     FROM accounts a JOIN account_balances b ON b.account_id=a.account_id
                     WHERE a.account_id=?
                     """)) {
@@ -433,7 +715,8 @@ public final class SqliteEcosystemStore implements EcosystemStore {
                     if (!"ACTIVE".equals(row.getString(1))) throw new LedgerException(
                             LedgerException.Code.ACCOUNT_FROZEN, "account is not active");
                     long value = Math.addExact(row.getLong(3), delta.getValue());
-                    if (row.getInt(2) == 0 && value < 0) throw new LedgerException(
+                    long availableAfter = Math.subtractExact(value, row.getLong(4));
+                    if (row.getInt(2) == 0 && availableAfter < 0) throw new LedgerException(
                             LedgerException.Code.INSUFFICIENT_FUNDS,
                             "account has insufficient funds: " + delta.getKey().value());
                     updated.put(delta.getKey(), value);
@@ -521,6 +804,7 @@ public final class SqliteEcosystemStore implements EcosystemStore {
 
     private record BalanceDelta(AccountId accountId, long amount) {}
     private record RefundTotals(long principal, long tax) {}
+    private record ReleaseIdentity(String key, String fingerprint) {}
 
     private void configure() throws SQLException {
         try (Statement statement = connection.createStatement()) {

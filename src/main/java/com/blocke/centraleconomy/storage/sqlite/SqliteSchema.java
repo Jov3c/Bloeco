@@ -34,9 +34,11 @@ final class SqliteSchema {
             statement.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS account_balances (
                         account_id TEXT PRIMARY KEY REFERENCES accounts(account_id),
-                        balance_minor INTEGER NOT NULL
+                        balance_minor INTEGER NOT NULL,
+                        reserved_minor INTEGER NOT NULL DEFAULT 0 CHECK(reserved_minor >= 0)
                     )
                     """);
+            ensureReservedColumn(connection, statement);
             statement.executeUpdate("""
                     CREATE TABLE IF NOT EXISTS institutions (
                         institution_id TEXT PRIMARY KEY,
@@ -79,6 +81,27 @@ final class SqliteSchema {
                         original_operation_id TEXT REFERENCES ecosystem_operations(operation_id),
                         committed_at_epoch_ms INTEGER NOT NULL,
                         UNIQUE(institution_id, idempotency_key)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS fund_reservations (
+                        reservation_id TEXT PRIMARY KEY,
+                        institution_id TEXT NOT NULL REFERENCES institutions(institution_id),
+                        player_uuid TEXT NOT NULL,
+                        principal_minor INTEGER NOT NULL CHECK(principal_minor > 0),
+                        tax_minor INTEGER NOT NULL CHECK(tax_minor >= 0),
+                        tax_rule_version TEXT NOT NULL REFERENCES tax_rules(version_id),
+                        status TEXT NOT NULL,
+                        expires_at_epoch_ms INTEGER NOT NULL,
+                        created_at_epoch_ms INTEGER NOT NULL,
+                        updated_at_epoch_ms INTEGER NOT NULL,
+                        reserve_idempotency_key TEXT NOT NULL,
+                        reserve_fingerprint TEXT NOT NULL,
+                        release_idempotency_key TEXT,
+                        release_fingerprint TEXT,
+                        capture_operation_id TEXT REFERENCES ecosystem_operations(operation_id),
+                        UNIQUE(institution_id, reserve_idempotency_key),
+                        UNIQUE(institution_id, release_idempotency_key)
                     )
                     """);
             statement.executeUpdate("""
@@ -266,5 +289,19 @@ final class SqliteSchema {
             statement.executeUpdate("INSERT OR IGNORE INTO schema_history(version, applied_at_epoch_ms) VALUES ("
                     + VERSION + ", " + System.currentTimeMillis() + ")");
         }
+    }
+
+    private static void ensureReservedColumn(Connection connection, Statement statement) throws SQLException {
+        boolean exists = false;
+        try (var rows = connection.createStatement().executeQuery("PRAGMA table_info(account_balances)")) {
+            while (rows.next()) {
+                if ("reserved_minor".equalsIgnoreCase(rows.getString("name"))) {
+                    exists = true;
+                    break;
+                }
+            }
+        }
+        if (!exists) statement.executeUpdate(
+                "ALTER TABLE account_balances ADD COLUMN reserved_minor INTEGER NOT NULL DEFAULT 0 CHECK(reserved_minor >= 0)");
     }
 }

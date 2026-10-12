@@ -20,6 +20,12 @@ public interface EcosystemStore extends AutoCloseable {
     Optional<SettlementRecord> findOperation(String clientId, String idempotencyKey);
     List<SettlementRecord> recentTransactions(String clientId, String accountPurpose, int limit);
     long balance(AccountId accountId);
+    long reservedBalance(UUID playerId);
+    long availableBalance(UUID playerId);
+    ReservationRecord reserve(ReservationCommand command);
+    SettlementRecord capture(CaptureCommand command);
+    ReservationRecord release(ReservationTransition command);
+    Optional<ReservationRecord> reservation(String clientId, UUID reservationId, Instant now);
     @Override void close();
 
     record InstitutionRegistration(
@@ -49,4 +55,15 @@ public interface EcosystemStore extends AutoCloseable {
             UUID operationId, UUID journalId, String clientId, UUID originalOperationId,
             Money principal, String businessType, String businessReference, String displayMemo,
             String idempotencyKey, String fingerprint, Instant committedAt) {}
+
+    record ReservationCommand(UUID reservationId, String clientId, UUID playerId, Money principal,
+                              Money tax, UUID taxRuleVersion, Instant expiresAt, Instant createdAt,
+                              String idempotencyKey, String fingerprint) {}
+
+    record CaptureCommand(UUID operationId, UUID journalId, String clientId, UUID reservationId,
+                          AccountId institutionAccountId, String businessType, String businessReference,
+                          String displayMemo, String idempotencyKey, String fingerprint, Instant committedAt) {}
+
+    record ReservationTransition(String clientId, UUID reservationId, String idempotencyKey,
+                                 String fingerprint, Instant transitionedAt) {}
 }

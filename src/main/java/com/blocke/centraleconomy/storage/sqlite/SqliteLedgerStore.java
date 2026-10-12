@@ -679,7 +679,7 @@ public final class SqliteLedgerStore implements LedgerStore {
                 throw new LedgerException(LedgerException.Code.INVALID_AMOUNT,
                         "account balance exceeds the supported range", exception);
             }
-            if (!account.permitsNegative && updated < 0) {
+            if (!account.permitsNegative && Math.subtractExact(updated, account.reserved) < 0) {
                 throw new LedgerException(LedgerException.Code.INSUFFICIENT_FUNDS,
                         "account has insufficient funds: " + delta.getKey().value());
             }
@@ -807,7 +807,7 @@ public final class SqliteLedgerStore implements LedgerStore {
     private Map<AccountId, StoredAccount> loadAccounts(List<AccountId> accountIds) throws SQLException {
         Map<AccountId, StoredAccount> result = new HashMap<>();
         try (PreparedStatement statement = connection.prepareStatement("""
-                SELECT a.status, a.permits_negative, b.balance_minor
+                SELECT a.status, a.permits_negative, b.balance_minor, b.reserved_minor
                 FROM accounts a JOIN account_balances b ON b.account_id = a.account_id
                 WHERE a.account_id = ?
                 """)) {
@@ -815,7 +815,8 @@ public final class SqliteLedgerStore implements LedgerStore {
                 statement.setString(1, accountId.value());
                 try (ResultSet row = statement.executeQuery()) {
                     if (row.next()) {
-                        result.put(accountId, new StoredAccount(row.getString(1), row.getInt(2) == 1, row.getLong(3)));
+                        result.put(accountId, new StoredAccount(
+                                row.getString(1), row.getInt(2) == 1, row.getLong(3), row.getLong(4)));
                     }
                 }
             }
@@ -947,5 +948,5 @@ public final class SqliteLedgerStore implements LedgerStore {
         return new LedgerException(LedgerException.Code.STORAGE_UNAVAILABLE, message, cause);
     }
 
-    private record StoredAccount(String status, boolean permitsNegative, long balance) {}
+    private record StoredAccount(String status, boolean permitsNegative, long balance, long reserved) {}
 }
