@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates the version 2 central-journal schema on a new SQLite database. */
 final class SqliteSchema {
-    static final int VERSION = 5;
+    static final int VERSION = 6;
 
     private SqliteSchema() {}
 
@@ -55,6 +55,30 @@ final class SqliteSchema {
                         institution_id TEXT NOT NULL REFERENCES institutions(institution_id),
                         capability TEXT NOT NULL,
                         PRIMARY KEY(institution_id, capability)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS ecosystem_operations (
+                        operation_id TEXT PRIMARY KEY,
+                        institution_id TEXT NOT NULL REFERENCES institutions(institution_id),
+                        idempotency_key TEXT NOT NULL,
+                        request_fingerprint TEXT NOT NULL,
+                        operation_type TEXT NOT NULL,
+                        settlement_kind TEXT NOT NULL,
+                        player_uuid TEXT NOT NULL,
+                        institution_account_id TEXT NOT NULL REFERENCES accounts(account_id),
+                        principal_minor INTEGER NOT NULL CHECK(principal_minor > 0),
+                        tax_minor INTEGER NOT NULL CHECK(tax_minor >= 0),
+                        fee_minor INTEGER NOT NULL CHECK(fee_minor >= 0),
+                        institution_net_minor INTEGER NOT NULL CHECK(institution_net_minor >= 0),
+                        tax_rule_version TEXT REFERENCES tax_rules(version_id),
+                        business_type TEXT NOT NULL,
+                        business_reference TEXT NOT NULL,
+                        display_memo TEXT NOT NULL,
+                        journal_id TEXT NOT NULL UNIQUE REFERENCES journal_entries(entry_id),
+                        original_operation_id TEXT REFERENCES ecosystem_operations(operation_id),
+                        committed_at_epoch_ms INTEGER NOT NULL,
+                        UNIQUE(institution_id, idempotency_key)
                     )
                     """);
             statement.executeUpdate("""
@@ -237,6 +261,8 @@ final class SqliteSchema {
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_tax_category_effective ON tax_rules(category, effective_from_epoch_ms, effective_until_epoch_ms)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_audit_created ON audit_events(created_at_epoch_ms)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_loan_payments_loan_paid ON bank_loan_payments(loan_id, paid_at_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_ecosystem_account_time ON ecosystem_operations(institution_account_id, committed_at_epoch_ms)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS ix_ecosystem_original ON ecosystem_operations(original_operation_id)");
             statement.executeUpdate("INSERT OR IGNORE INTO schema_history(version, applied_at_epoch_ms) VALUES ("
                     + VERSION + ", " + System.currentTimeMillis() + ")");
         }

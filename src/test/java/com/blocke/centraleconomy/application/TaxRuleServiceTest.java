@@ -63,7 +63,8 @@ class TaxRuleServiceTest {
 
         assertEquals(100, taxes.current(TaxCategory.PLAYER_TRANSFER_FEE).basisPoints());
         assertEquals(500, taxes.current(TaxCategory.PLAYER_TRANSFER_INCOME).basisPoints());
-        assertEquals(2, store.taxRuleCount());
+        assertEquals(500, taxes.current(TaxCategory.PLUGIN_CONSUMPTION).basisPoints());
+        assertEquals(3, store.taxRuleCount());
     }
 
     @Test

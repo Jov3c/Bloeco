@@ -30,6 +30,9 @@ public final class TaxRuleService {
         if (store.currentTaxRule(TaxCategory.PLAYER_TRANSFER_INCOME, clock.instant()).isEmpty()) {
             change(TaxCategory.PLAYER_TRANSFER_INCOME, 500, 0, "system:bootstrap", "default income tax");
         }
+        if (store.currentTaxRule(TaxCategory.PLUGIN_CONSUMPTION, clock.instant()).isEmpty()) {
+            change(TaxCategory.PLUGIN_CONSUMPTION, 500, 0, "system:bootstrap", "default consumption tax");
+        }
     }
 
     public TaxRule change(
@@ -41,7 +44,7 @@ public final class TaxRuleService {
         if (fixedMinor < 0) throw new IllegalArgumentException("fixed fee must not be negative");
         AccountId destination = switch (category) {
             case PLAYER_TRANSFER_FEE -> AccountId.feeRevenue();
-            case PLAYER_TRANSFER_INCOME -> AccountId.taxRevenue();
+            case PLAYER_TRANSFER_INCOME, PLUGIN_CONSUMPTION -> AccountId.taxRevenue();
         };
         return store.changeTaxRule(new TaxRule(UUID.randomUUID(), category, basisPoints,
                 Money.ofMinor(fixedMinor), destination, clock.instant(), null, actorId, memo));
