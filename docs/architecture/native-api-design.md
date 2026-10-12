@@ -14,17 +14,19 @@ Bloeco 主插件是当前唯一的 API Provider，负责真实余额、机构账
 
 ## 2. 构建与发布结构
 
-仓库调整为 Gradle 多模块工程：
+Bloeco 保持单一 Gradle 工程和单一正式插件 JAR，API 接口直接内嵌在 Bloeco 插件中，不额外发布 `bloeco-api.jar`：
 
 ```text
-Bloeco
-├── bloeco-api       稳定接口、请求、结果、回执和版本声明
-└── bloeco-plugin    Paper 插件、经济实现、存储、GUI 和运维功能
+Bloeco.jar
+├── com.blocke.bloeco.api           稳定接口、请求、结果、回执和版本声明
+└── com.blocke.centraleconomy       Provider 实现、存储、GUI 和运维功能
 ```
 
-`bloeco-api` 单独生成轻量 JAR。其他系列插件以 `compileOnly` 方式依赖它，运行时通过 Paper `ServicesManager` 获取 Provider。API 使用独立语义版本；主插件版本变化不自动意味着 API 主版本变化。
+其他 Bloeco 系列插件在编译期以 `compileOnly` 方式引用 Bloeco 主插件 JAR，并在 `plugin.yml` 中声明 `depend: [Bloeco]`。Consumer 不得把 Bloeco JAR 或 `com.blocke.bloeco.api` 类重新打入自己的成品，避免同名 API 类由两个插件类加载器加载后无法通过 `ServicesManager` 匹配。
 
-公开包固定在 `com.blocke.bloeco.api`。`com.blocke.centraleconomy` 及数据库表、Redis Stream、GUI 类均不是兼容合同。
+运行时仍只安装一个 Bloeco 主插件。Consumer 通过 Paper `ServicesManager` 获取 Provider，不直接实例化 API 实现。API 使用独立语义版本；主插件版本变化不自动意味着 API 主版本变化。
+
+公开包固定在 `com.blocke.bloeco.api`。公开兼容面只能引用 Java 标准库、Paper API 和同一公开包中的类型，不能泄露 `com.blocke.centraleconomy` 类型。`com.blocke.centraleconomy`、数据库表、Redis Stream 和 GUI 类均不是兼容合同。
 
 ## 3. Provider 发现与绑定
 
@@ -210,6 +212,22 @@ Bloeco 只有在以下条件全部满足后才注册 Provider：
 
 ## 12. Consumer 接入示例
 
+Consumer 构建配置示例：
+
+```kotlin
+dependencies {
+    compileOnly(files("libs/Bloeco.jar"))
+}
+```
+
+Consumer 的 `plugin.yml`：
+
+```yaml
+depend: [Bloeco]
+```
+
+禁止使用 `implementation(files("libs/Bloeco.jar"))`，也禁止通过 Shadow 将 Bloeco API 类复制进 Consumer 成品。
+
 ```java
 BloecoApi api = Bukkit.getServicesManager().load(BloecoApi.class);
 if (api == null || !api.version().supportsMajor(1)) {
@@ -247,6 +265,7 @@ api.connect(this, InstitutionDescriptor.of("bloeco.shop", "Bloeco 商店"))
 
 ## 14. 不在 API 1.0 范围内
 
+- 独立 API JAR 或独立 API Maven 模块；
 - Vault 或 VaultUnlocked 兼容；
 - 多货币；
 - 任意余额设置或无来源入账；
@@ -254,4 +273,3 @@ api.connect(this, InstitutionDescriptor.of("bloeco.shop", "Bloeco 商店"))
 - 跨进程 HTTP API；
 - 商店、领地、任务、证券等业务本身；
 - 允许 Consumer 直接订阅 Redis 作为结算依据。
-
