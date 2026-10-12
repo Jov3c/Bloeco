@@ -159,7 +159,10 @@ public final class MySqlEcosystemStore implements EcosystemStore {
     }
 
     @Override public SettlementRecord capture(CaptureCommand command){
-        open();return transactions.execute(c->{
+        open();
+        if(expireReservationIfNeeded(command.clientId(),command.reservationId(),command.committedAt()))
+            throw new LedgerException(LedgerException.Code.POLICY_REJECTED,"reservation is no longer active");
+        return transactions.execute(c->{
             Optional<SettlementRecord> replay=settlements.findByKey(c,command.clientId(),command.idempotencyKey());
             if(replay.isPresent()){matching(replay.get(),command.fingerprint());return replay.get();}
             ReservationRecord reservation=reservations.find(c,command.reservationId(),true).orElseThrow(()->
@@ -189,6 +192,11 @@ public final class MySqlEcosystemStore implements EcosystemStore {
                     new LedgerException(LedgerException.Code.INVALID_JOURNAL,"reservation does not exist"));own(command.clientId(),r);
             String[] prior=releaseIdentity(c,r.reservationId());
             if(prior[0]!=null){if(!prior[0].equals(command.idempotencyKey())||!prior[1].equals(command.fingerprint()))conflict();return r;}
+            if(r.status()==ReservationRecord.Status.ACTIVE&&!r.expiresAt().isAfter(command.transitionedAt())){
+                AccountId player=AccountId.player(r.playerId());BalanceRepository.StoredAccount locked=lockOne(c,player);
+                balances.updateReserved(c,player,Math.subtractExact(locked.reserved(),r.reservedTotal().minor()));
+                updateReservation(c,r.reservationId(),"EXPIRED",command.transitionedAt(),null,null,null);
+                return reservations.find(c,r.reservationId(),false).orElseThrow();}
             if(r.status()!=ReservationRecord.Status.ACTIVE)throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
                     "reservation is no longer active");
             AccountId player=AccountId.player(r.playerId());BalanceRepository.StoredAccount locked=lockOne(c,player);
@@ -236,6 +244,12 @@ public final class MySqlEcosystemStore implements EcosystemStore {
     private BalanceRepository.StoredAccount lockOne(Connection c,AccountId id)throws SQLException{
         var result=balances.lockInOrder(c,List.of(id));var account=result.get(id);if(account==null)throw new LedgerException(
                 LedgerException.Code.ACCOUNT_NOT_FOUND,"account does not exist: "+id.value());return account;}
+    private boolean expireReservationIfNeeded(String clientId,UUID id,Instant now){return transactions.execute(c->{
+        Optional<ReservationRecord> found=reservations.find(c,id,true);if(found.isEmpty())return false;
+        ReservationRecord r=found.get();own(clientId,r);if(r.status()!=ReservationRecord.Status.ACTIVE||r.expiresAt().isAfter(now))return false;
+        AccountId player=AccountId.player(r.playerId());BalanceRepository.StoredAccount locked=lockOne(c,player);
+        balances.updateReserved(c,player,Math.subtractExact(locked.reserved(),r.reservedTotal().minor()));
+        updateReservation(c,id,"EXPIRED",now,null,null,null);return true;});}
     private long balanceValue(AccountId id,String column){if(!column.equals("balance_minor")&&!column.equals("reserved_minor"))throw new IllegalArgumentException();
         open();try(Connection c=dataSource.getConnection();PreparedStatement s=c.prepareStatement(
                 "SELECT "+column+" FROM account_balances WHERE account_id=?")){s.setString(1,id.value());try(ResultSet r=s.executeQuery()){

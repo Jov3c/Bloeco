@@ -62,7 +62,7 @@ Runtime 只创建一个 `BloecoDataSource`。Ledger、Banking 与 Outbox 共享�
 - Redis 连接失败进入 `DEGRADED`，后台按配置的 5–30 秒间隔进入 `RECONNECTING` 并探测；成功后回到 `AVAILABLE`。发布器随后自动从 `outbox_events` 未发布位置继续，无需重启插件。
 - Redis bridge 记录 `redis_available`、`failure_count`、`last_failure_time`、`last_recovery_time` 和 `reconnect_attempts`；这类异常不会向玩家转账或银行事务抛出，也不会标记 outbox 事件为已发布。后台发布失败日志限频，避免 Redis 故障时刷屏。
 - MySQL 连接池设置 5 秒获取超时、2 秒验证超时、30 分钟最大生命周期和 2 分钟保活；SQLite 使用 WAL、`foreign_keys=ON`、5 秒 `busy_timeout`、`synchronous=FULL` 与 `temp_store=MEMORY`。
-- MySQL 使用不可变 V001-V006 迁移链，V006 增加余额版本列；每个成功版本单独写入 `schema_history`，历史断档或迁移失败会阻止启动。SQLite 版本 4 继续用于开发/导入模式。
+- MySQL 使用不可变 V001-V007 迁移链：V006 增加余额版本列，V007 增加冻结余额、机构能力、原生结算和预授权结构；每个成功版本单独写入 `schema_history`，历史断档或迁移失败会阻止启动。SQLite schema 6 继续用于开发/导入模式。
 
 ## 6. 配置基线
 

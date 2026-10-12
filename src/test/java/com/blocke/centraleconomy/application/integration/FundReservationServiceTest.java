@@ -64,7 +64,8 @@ class FundReservationServiceTest {
             ReservationRecord expired = fixture.service.reserve("bloeco.auction", PLAYER,
                     Money.ofMinor(1_000), CLOCK.instant().minusSeconds(1), context("过期冻结", "reserve-3"));
             assertEquals(ReservationRecord.Status.EXPIRED,
-                    fixture.service.reservation("bloeco.auction", expired.reservationId()).status());
+                    fixture.service.release("bloeco.auction", expired.reservationId(),
+                            context("到期释放", "release-expired")).status());
             assertEquals(20_000, fixture.store.availableBalance(PLAYER));
         }
     }

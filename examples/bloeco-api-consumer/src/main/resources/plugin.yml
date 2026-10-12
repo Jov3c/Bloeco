@@ -1,0 +1,5 @@
+name: Bloeco-Consumer-Example
+version: 1.0.0
+main: com.blocke.example.ExamplePlugin
+api-version: '1.21'
+depend: [Bloeco]

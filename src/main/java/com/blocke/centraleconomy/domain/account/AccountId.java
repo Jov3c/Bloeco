@@ -3,6 +3,10 @@ package com.blocke.centraleconomy.domain.account;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /** Stable account identifier used in every journal posting. */
 public record AccountId(String value) implements Comparable<AccountId> {
@@ -32,7 +36,12 @@ public record AccountId(String value) implements Comparable<AccountId> {
     }
 
     public static AccountId plugin(String clientId, String purpose) {
-        return new AccountId("plugin:" + segment(clientId, "clientId") + ":" + segment(purpose, "purpose"));
+        String client = segment(clientId, "clientId");
+        String use = segment(purpose, "purpose");
+        String readable = "plugin:" + client + ":" + use;
+        if (readable.length() <= 96) return new AccountId(readable);
+        return new AccountId("plugin:" + client.substring(0, Math.min(client.length(), 24))
+                + ":" + use.substring(0, Math.min(use.length(), 24)) + ":" + digest(client + "\0" + use));
     }
 
     private static String segment(String value, String label) {
@@ -41,6 +50,15 @@ public record AccountId(String value) implements Comparable<AccountId> {
             throw new IllegalArgumentException(label + " must be a safe identifier");
         }
         return normalized;
+    }
+
+    private static String digest(String value) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash, 0, 12);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
     }
 
     @Override

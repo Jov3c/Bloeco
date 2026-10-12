@@ -369,6 +369,10 @@ public final class SqliteEcosystemStore implements EcosystemStore {
                 return record;
             }
             record = expireIfNeeded(record, command.transitionedAt());
+            if (record.status() == ReservationRecord.Status.EXPIRED) {
+                commit();
+                return record;
+            }
             if (record.status() != ReservationRecord.Status.ACTIVE) throw new LedgerException(
                     LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
             releaseReserved(record);

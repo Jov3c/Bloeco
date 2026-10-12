@@ -8,7 +8,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 
 - MySQL 8.4/InnoDB 默认权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
 - 数据库并发保护：多账户资金操作按 `account_id` 固定顺序一次性 `FOR UPDATE`，物化余额每次更新都会递增 `version`，不依赖 Java 全局锁。
-- 正式版本迁移：V001-V006 顺序执行并逐版记录；旧 V3/V4/V5 数据库会补齐历史检查点后升级，迁移失败时经济中心拒绝启动。
+- 正式版本迁移：V001-V007 顺序执行并逐版记录；V007 增加机构能力、结算、退款与冻结资金结构，迁移失败时经济中心拒绝启动。
 - Redis 7 默认作为可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
 - 整数最小货币单位：金额全程使用 `long`，拒绝浮点误差与超过两位小数的玩家输入。
 - 分级账户：货币当局、财政、机构、玩家四级分类；每个余额都能追溯到复式分录。
@@ -17,6 +17,9 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 - 余额调整：增加玩家余额只能使用已有国库资金，降低余额则回到国库，不能借管理命令凭空造币。
 - 玩家转账：一笔原子分录同时结算本金、付款手续费、收款个人所得税；重复请求不会二次扣款。
 - 版本化税制：税率和固定费用保留生效时间、操作者、原因与历史版本。
+- 内嵌原生 API 1.0：通过 Paper `ServicesManager` 为每个接入插件建立能力受限的机构客户端和专属账户；API 与实现同 JAR 发布，不依赖 Vault。
+- 机构结算：支持消费收款、机构付款、凭证查询、分批退款及中文说明快照；消费税默认 5%，所有操作资金守恒且永久幂等。
+- 资金预授权：支持冻结、捕获、释放与到期，冻结资金会同时约束 `/pay`、银行及插件扣款，阻止并发超卖和重复消费。
 - 审计与指标：余额、最近账单、货币供给、玩家流通量、国库、税费、账户层级和当日资金流量均可查询。
 - 完整性保护：启动及定时重算永久分录；发现不一致即进入只读模式，停止一切资金写入并保留查询能力。
 - 安全迁移：旧 CentralEconomy 数据会先生成一致性备份，在临时库转换并验证后才替换。
@@ -104,6 +107,8 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 
 请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。商店、证券、任务等插件不得直连 Bloeco 数据库或 Redis，必须通过异步原生 API 提交带机构、业务类型、中文说明和幂等键的结算。
 
+消费者在 `plugin.yml` 声明 `depend: [Bloeco]`，将 Bloeco JAR 设为 `compileOnly`，再从 Paper `ServicesManager` 获取 `BloecoApi`。不要 shade API 类，也不要在主线程等待数据库 Future。完整示例见 [examples/bloeco-api-consumer](examples/bloeco-api-consumer)。
+
 完整的中央银行设计见 [系统设计](docs/architecture/central-bank-design.md)。
 
 ## 构建
@@ -114,4 +119,4 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 ./gradlew clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.4.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动和 Redis 客户端已打入插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.5.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动、Redis 客户端和公开 API 1.0 均位于同一个插件包；不需要 Vault 或其他经济前置。

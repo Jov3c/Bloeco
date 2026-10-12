@@ -29,7 +29,7 @@ public record JournalEntry(
                     "client id and idempotency key must be supplied together");
         }
         if (clientId != null && (clientId.isBlank() || clientId.length() > 64
-                || idempotencyKey.isBlank() || idempotencyKey.length() > 128)) {
+                || idempotencyKey.isBlank() || idempotencyKey.length() > 255)) {
             throw new LedgerException(LedgerException.Code.INVALID_JOURNAL,
                     "invalid idempotency identity");
         }

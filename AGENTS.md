@@ -6,7 +6,7 @@ This file is the first technical reference for coding agents working in this rep
 
 Bloeco is the mandatory foundation of the Bloeco economy-plugin family and the single authoritative central-bank ledger for Paper 1.21.11. Every later Bloeco commerce, securities, auction, quest-reward, land, or minigame plugin must integrate with this project for accounts and settlement. Bloeco owns currency supply, Treasury funds, player balances, taxes, fees, journal entries, integrity checks, institution accounts, and the state-owned bank.
 
-Bloeco does not implement shops, auctions, securities, quests, item delivery, product pricing, or inventory management. It currently does not depend on or register Vault. A family plugin keeps only its own orders, products, positions, or other business state, while Bloeco remains the sole owner of spendable balances and monetary journals. Integration uses the versioned native API when that API is released.
+Bloeco does not implement shops, auctions, securities, quests, item delivery, product pricing, or inventory management. It does not depend on or register Vault. A family plugin keeps only its own orders, products, positions, or other business state, while Bloeco remains the sole owner of spendable balances and monetary journals. Integration uses the embedded `com.blocke.bloeco.api` API 1.x published through Paper `ServicesManager`.
 
 ## Technology stack
 
@@ -24,7 +24,7 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - `domain/banking/`: bank policy and immutable customer/balance-sheet snapshots.
 - `application/banking/`: the asynchronous banking boundary and persistence port.
 - `application/`: central-bank, payment, tax, query, result, and asynchronous use cases. `LedgerStore` is the persistence port.
-- `storage/mysql/`: runtime-owned `BloecoDataSource`, `MySqlTransactionManager`, V001-V006 migrations, repositories, integrity verification, and Outbox publication. Stores must never create a second pool when Runtime supplies the shared source.
+- `storage/mysql/`: runtime-owned `BloecoDataSource`, `MySqlTransactionManager`, immutable V001-V007 migrations, repositories, integrity verification, ecosystem settlement, and Outbox publication. Stores must never create a second pool when Runtime supplies the shared source.
 - `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration for local/import use.
 - `storage/redis/`: optional cache and Stream bridge; connection failure is a non-authoritative degradation.
 - `paper/`: plugin lifecycle adapters, `/eco`, `/pay`, permissions, GUI screens, and player-facing formatting.
@@ -52,7 +52,7 @@ These constraints are mandatory:
 
 ## Concurrency and Paper rules
 
-`AsyncEconomyFacade` and `AsyncBankingFacade` each own one serial economy worker with a bounded queue. JDBC and ledger writes stay off the Paper main thread. If a facade is closed or its queue rejects work, return a storage-unavailable result instead of leaking `RejectedExecutionException`. Bukkit inventory, player, and message operations must return to the Paper scheduler before touching Bukkit state. Do not block the main thread waiting on database futures.
+`AsyncEconomyFacade`, `AsyncBankingFacade`, and `AsyncInstitutionFacade` keep JDBC and ledger writes off the Paper main thread with bounded queues. SQLite institution work is serialized; MySQL institution work uses the configured bounded worker pool and ordered row locks. If a facade is closed or its queue rejects work, return a storage-unavailable result instead of leaking `RejectedExecutionException`. Bukkit inventory, player, and message operations must return to the Paper scheduler before touching Bukkit state. Do not block the main thread waiting on database futures.
 
 MySQL writes use `MySqlTransactionManager`; repositories receive the transaction `Connection` and never call commit or rollback. Balance-changing transactions sort account IDs, acquire one ordered `SELECT ... FOR UPDATE`, and increment `account_balances.version`. `MySqlLedgerStore` must not retain a JDBC `Connection` or use store-level `synchronized` as its concurrency model.
 
@@ -75,9 +75,9 @@ The default loan contract is a 3.2% annual fixed rate (`320` basis points) for 7
 
 ## Third-party integration
 
-The public native API is versioned separately from the internal store. Until a compatible API artifact is published, another plugin must not read Bloeco MySQL/SQLite tables, invoke internal classes by reflection, or use Redis as a substitute. See `docs/architecture/storage-v2-mysql-redis.md` and `docs/third-party-economy-integration.md`.
+The public native API is versioned separately from the internal store and is embedded in the Bloeco plugin JAR. Consumers use that JAR as `compileOnly`, declare `depend: [Bloeco]`, discover `BloecoApi` from `ServicesManager`, and must not shade or copy `com.blocke.bloeco.api`. Another plugin must not read Bloeco MySQL/SQLite tables, invoke internal classes by reflection, or use Redis as a substitute. See `docs/third-party-economy-integration.md`.
 
-When implementing the native API, keep it asynchronous and versioned. A plugin registers a stable institution `clientId`; Bloeco creates and owns its institution accounts. Settlement requests carry a stable idempotency key and return a permanent journal ID. A shop marks an order paid and delivers items only after Bloeco returns a committed receipt. Timeouts remain result-unknown and must be queried or retried with the same key. See `docs/third-party-economy-integration.md` for the planned request lifecycle, refund rules, and error contract.
+Keep API 1.x asynchronous and binary compatible. A plugin registers a stable institution `clientId`; Bloeco creates and owns its institution accounts. Settlement requests carry a stable idempotency key and return a permanent journal ID. A shop marks an order paid and delivers items only after Bloeco returns a committed receipt. Timeouts remain result-unknown and must be queried or retried with the same key. Refunds reference the original operation and reservations have one terminal transition. See `docs/third-party-economy-integration.md` for the request lifecycle and error contract.
 
 Every external settlement must separate these values:
 

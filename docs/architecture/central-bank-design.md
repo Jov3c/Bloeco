@@ -45,7 +45,7 @@ Bloeco 只维护一套中央总账。“插件专属账本”是中央总账内�
 
 ### 3.2 插件专属子账本
 
-计划中的第三方插件接口通过 Paper `ServicesManager` 注册并提供 `BloecoApi`。Bloeco 将使用调用方的实际 `Plugin` 实例识别身份，并生成规范化 `client_id`；插件不能在请求参数中冒充其他插件。该 API 尚未作为兼容工件发布，当前接入方不得直接调用内部实现或数据库。
+第三方插件接口通过 Paper `ServicesManager` 注册并提供内嵌 `BloecoApi` 1.0。Bloeco 使用调用方的实际 `Plugin` 实例、主类和版本识别机构身份；插件不能在请求参数中冒充其他插件。消费者把 Bloeco JAR 设为 `compileOnly`，不得 shade API、调用内部实现或直连数据库。
 
 首次批准接入后，Bloeco 创建：
 
@@ -162,27 +162,23 @@ Bloeco 内置单一国有银行 `bloeco.bank`。首次建立时，配置的初�
 
 玩家从 `/eco -> 国有银行` 使用账户详情、存款、取款、贷款和还款；信用等级与 A–D 标准只在账户详情显示。转账、存款、取款和贷款提供 100/1000/10000 预设与聊天栏自定义金额，存取款另提供按事务实时余额执行的“全部存入”和“全部取出”；聊天输入支持取消和 60 秒超时。普通玩家提示只显示业务结果、金额和税费，不展示中央总账或内部清算术语。银行政策由 `bloeco.role.banker` 管理，该角色不包含发行或税收权限。
 
-## 6. 计划中的原生异步 API
+## 6. 原生异步 API 1.0
 
-后续独立 API 版本将通过 Paper `ServicesManager` 暴露稳定的 Java 接口，不依赖 Vault。API 实现返回 `CompletionStage<Result<T>>`，数据库完成后才结束；回调线程不保证为 Paper 主线程。当前 1.3 源码只提供 Bloeco 内部异步边界，第三方兼容 API 尚未发布。
+Bloeco 1.5 通过 Paper `ServicesManager` 暴露内嵌 Java API 1.0，不依赖 Vault。API 返回 `CompletionStage<EconomyResult<T>>`，权威 SQL 事务提交后才返回成功凭证；回调线程不保证为 Paper 主线程。SQLite 使用单工作线程，MySQL 使用配置化有界工作池。
 
 首版能力：
 
 ```java
 interface BloecoApi {
-    CompletionStage<Result<AccountView>> playerAccount(UUID playerId);
-    CompletionStage<Result<MoneyView>> balance(AccountRef account);
-    CompletionStage<Result<TransferReceipt>> payPlayer(PlayerPayment command);
-    CompletionStage<Result<PaymentIntentView>> createPaymentIntent(PaymentIntentCommand command);
-    CompletionStage<Result<TransferReceipt>> spendPluginFunds(PluginTransfer command);
-    CompletionStage<Result<List<JournalEntryView>>> ownEntries(EntryQuery query);
-    CompletionStage<Result<HealthView>> health();
+    ApiVersion version();
+    CompletionStage<EconomyResult<InstitutionClient>> connect(
+        Plugin plugin, InstitutionDescriptor descriptor);
 }
 ```
 
-写命令包含幂等键、金额、业务类别和长度受限的说明。Bloeco 从服务绑定上下文取得 `client_id`，不信任命令中自报的插件身份。
+`InstitutionClient` 提供玩家/机构余额、`chargePlayer`、`payPlayer`、`refund`、凭证查询和冻结/捕获/释放。写命令包含幂等键、金额、机器业务类型、内部引用和长度受限的中文说明。Bloeco 从真实 `Plugin` 绑定取得身份，不信任命令中自报的插件身份。账户句柄不可伪造或跨机构使用。
 
-稳定错误码至少包括：`INVALID_AMOUNT`、`ACCOUNT_NOT_FOUND`、`ACCOUNT_FROZEN`、`INSUFFICIENT_FUNDS`、`UNAUTHORIZED`、`POLICY_REJECTED`、`IDEMPOTENCY_CONFLICT`、`STORAGE_UNAVAILABLE` 和 `INTERNAL_ERROR`。错误结果不得泄漏 SQL、路径或凭据。
+稳定错误码包括无效请求/金额、账户不存在/冻结、余额不足、未授权、能力拒绝、政策拒绝、幂等冲突、完整性只读、存储不可用、结果未知和内部错误。错误结果不得泄漏 SQL、路径或凭据。
 
 ## 7. 管理权限与 GUI
 
@@ -240,7 +236,7 @@ redis:
 - 按稳定顺序一次性锁定受影响账户行，避免死锁；余额更新递增 `version`
 - 唯一约束保证幂等
 - `outbox_events` 与账本事务一起写入，保证 Redis 事件最终可补发
-- V001-V006 不可变顺序迁移；历史断档或迁移失败时拒绝启动
+- V001-V007 不可变顺序迁移；历史断档或迁移失败时拒绝启动
 
 SQLite 和 MySQL 必须通过同一套存储契约测试。两者的余额、幂等、并发、回滚、冲正和供给统计结果必须一致。
 
