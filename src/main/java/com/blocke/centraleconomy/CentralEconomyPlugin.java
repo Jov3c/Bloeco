@@ -7,6 +7,10 @@ import com.blocke.centraleconomy.paper.PayCommand;
 import com.blocke.centraleconomy.paper.RoleAccess;
 import com.blocke.centraleconomy.paper.PlayerStarterFundsListener;
 import com.blocke.centraleconomy.paper.BloecoApiProvider;
+import com.blocke.centraleconomy.paper.PaperClusterRuntime;
+import com.blocke.centraleconomy.paper.ClusterPaymentTargetResolver;
+import com.blocke.centraleconomy.cluster.ClusterSettings;
+import com.blocke.centraleconomy.storage.redis.RedisClusterCoordinator;
 import com.blocke.bloeco.api.BloecoApi;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
@@ -15,6 +19,7 @@ import com.blocke.centraleconomy.storage.mysql.MySqlOutboxPublisher;
 import com.blocke.centraleconomy.config.ConfigurationSnapshot;
 import com.blocke.centraleconomy.config.ConfigurationValidator;
 import java.time.Duration;
+import java.time.Clock;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.ServicePriority;
 
@@ -27,6 +32,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
     private RedisEconomyBridge redisBridge;
     private MySqlOutboxPublisher outboxPublisher;
     private BloecoApiProvider apiProvider;
+    private PaperClusterRuntime clusterRuntime;
 
     @Override
     public void onEnable() {
@@ -53,7 +59,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
         connectRedisIfEnabled(storageType);
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
-        PayCommand pay = new PayCommand(this, runtime.facade());
+        PayCommand pay = createPayCommand(storageType);
         getCommand("pay").setExecutor(pay);
         getCommand("pay").setTabCompleter(pay);
         getCommand("eco").setExecutor(new EcoCommand(menu));
@@ -70,6 +76,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (clusterRuntime != null) {
+            clusterRuntime.close();
+            clusterRuntime = null;
+        }
         if (apiProvider != null) {
             getServer().getServicesManager().unregister(apiProvider);
             apiProvider = null;
@@ -113,7 +123,8 @@ public class CentralEconomyPlugin extends JavaPlugin {
         int workers = Math.max(2, getConfig().getInt("ecosystem-api.mysql-workers", 4));
         int queue = Math.max(8, getConfig().getInt("ecosystem-api.queue-capacity", 256));
         return BloecoRuntime.mysql(jdbcUrl, username, password, poolSize,
-                initialTreasury, bankCapital, bankPolicy, workers, queue);
+                initialTreasury, bankCapital, bankPolicy, workers, queue,
+                getConfig().getBoolean("cluster.enabled", false));
     }
 
     private BankingPolicy configuredBankPolicy() {
@@ -186,6 +197,26 @@ public class CentralEconomyPlugin extends JavaPlugin {
         } catch (RuntimeException exception) {
             getLogger().warning("Redis unavailable; continuing with MySQL authority only.");
         }
+    }
+
+    private PayCommand createPayCommand(String storageType) {
+        if (!getConfig().getBoolean("cluster.enabled", false)) {
+            return new PayCommand(this, runtime.facade());
+        }
+        if (!"mysql".equalsIgnoreCase(storageType) || redisBridge == null || runtime.clusterDirectory() == null) {
+            throw new IllegalArgumentException("cluster.enabled requires MySQL storage and Redis");
+        }
+        ClusterSettings settings = new ClusterSettings(true,
+                getConfig().getString("cluster.cluster-id", "production"),
+                getConfig().getString("cluster.server-id", "server-01"),
+                Duration.ofSeconds(getConfig().getLong("cluster.heartbeat-seconds", 10L)),
+                Duration.ofSeconds(getConfig().getLong("cluster.lease-seconds", 30L)),
+                getConfig().getString("cluster.consumer-group-prefix", "bloeco:v2:cluster:"));
+        RedisClusterCoordinator coordinator = new RedisClusterCoordinator(redisBridge, settings, Clock.systemUTC());
+        clusterRuntime = new PaperClusterRuntime(this, settings, runtime.clusterDirectory(), coordinator);
+        getLogger().info("Cross-server economy synchronization enabled as " + settings.serverId() + ".");
+        return new PayCommand(this, runtime.facade(),
+                new ClusterPaymentTargetResolver(runtime.clusterDirectory()), false);
     }
 
     private Money configuredPositiveMoney(String path, String defaultValue) {

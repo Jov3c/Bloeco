@@ -12,6 +12,6 @@ class MySqlEcosystemConcurrencyTest {
                 "src/main/java/com/blocke/centraleconomy/storage/mysql/MySqlEcosystemStore.java"));
         assertTrue(source.contains("lockInOrder"));
         assertTrue(source.contains("reservedDeltas"));
-        assertEquals(7,MySqlMigrations.LATEST_VERSION);
+        assertEquals(8,MySqlMigrations.LATEST_VERSION);
     }
 }

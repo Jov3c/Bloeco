@@ -8,12 +8,14 @@ import com.blocke.centraleconomy.application.IntegrityReport;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.storage.mysql.MySqlBankingStore;
+import com.blocke.centraleconomy.storage.mysql.MySqlClusterDirectoryStore;
 import com.blocke.centraleconomy.storage.mysql.MySqlLedgerStore;
 import com.blocke.centraleconomy.storage.mysql.MySqlOutboxPublisher;
 import com.blocke.centraleconomy.storage.mysql.BloecoDataSource;
 import com.blocke.centraleconomy.storage.mysql.MySqlTransactionManager;
 import com.blocke.centraleconomy.storage.redis.RedisEconomyBridge;
 import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
+import com.blocke.centraleconomy.cluster.AsyncClusterDirectory;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -28,17 +30,20 @@ public final class BloecoRuntime implements AutoCloseable {
     private final AsyncBankingFacade banking;
     private final BloecoDataSource mysqlDataSource;
     private final AsyncInstitutionFacade institutions;
+    private final AsyncClusterDirectory clusterDirectory;
 
     private BloecoRuntime(AsyncEconomyFacade facade, AsyncBankingFacade banking) {
-        this(facade, banking, null, null);
+        this(facade, banking, null, null, null);
     }
 
     private BloecoRuntime(AsyncEconomyFacade facade, AsyncBankingFacade banking,
-                          BloecoDataSource mysqlDataSource, AsyncInstitutionFacade institutions) {
+                          BloecoDataSource mysqlDataSource, AsyncInstitutionFacade institutions,
+                          AsyncClusterDirectory clusterDirectory) {
         this.facade = Objects.requireNonNull(facade, "facade");
         this.banking = banking;
         this.mysqlDataSource = mysqlDataSource;
         this.institutions = institutions;
+        this.clusterDirectory = clusterDirectory;
     }
 
     public static BloecoRuntime sqlite(Path databasePath) {
@@ -62,7 +67,7 @@ public final class BloecoRuntime implements AutoCloseable {
                 () -> new SqliteBankingStore(databasePath, clock), economy.readyStage(), initialBankCapital, policy);
         AsyncInstitutionFacade institutions = AsyncInstitutionFacade.sqlite(
                 databasePath, economy.readyStage(), economy::isReadOnly, queueCapacity);
-        return new BloecoRuntime(economy, bank, null, institutions);
+        return new BloecoRuntime(economy, bank, null, institutions, null);
     }
 
     public static BloecoRuntime mysql(String jdbcUrl, String username, String password,
@@ -82,22 +87,35 @@ public final class BloecoRuntime implements AutoCloseable {
                                       int maximumPoolSize, Money initialTreasury,
                                       Money initialBankCapital, BankingPolicy policy,
                                       int apiWorkers, int queueCapacity) {
+        return mysql(jdbcUrl, username, password, maximumPoolSize, initialTreasury,
+                initialBankCapital, policy, apiWorkers, queueCapacity, false);
+    }
+
+    public static BloecoRuntime mysql(String jdbcUrl, String username, String password,
+                                      int maximumPoolSize, Money initialTreasury,
+                                      Money initialBankCapital, BankingPolicy policy,
+                                      int apiWorkers, int queueCapacity,
+                                      boolean durablePlayerNotifications) {
         Clock clock = Clock.systemUTC();
         BloecoDataSource dataSource = new BloecoDataSource(jdbcUrl, username, password, maximumPoolSize);
         MySqlTransactionManager transactions = new MySqlTransactionManager(dataSource.dataSource());
         AsyncEconomyFacade economy = new AsyncEconomyFacade(
-                () -> new MySqlLedgerStore(dataSource, transactions), clock, initialTreasury);
+                () -> new MySqlLedgerStore(dataSource, transactions, durablePlayerNotifications),
+                clock, initialTreasury);
         AsyncBankingFacade bank = new AsyncBankingFacade(
                 () -> new MySqlBankingStore(dataSource, transactions, clock),
                 economy.readyStage(), initialBankCapital, policy);
         AsyncInstitutionFacade institutions = AsyncInstitutionFacade.mysql(dataSource, transactions,
                 economy.readyStage(), economy::isReadOnly, apiWorkers, queueCapacity);
-        return new BloecoRuntime(economy, bank, dataSource, institutions);
+        AsyncClusterDirectory directory = new AsyncClusterDirectory(
+                () -> new MySqlClusterDirectoryStore(dataSource), economy.readyStage(), queueCapacity);
+        return new BloecoRuntime(economy, bank, dataSource, institutions, directory);
     }
 
     public AsyncEconomyFacade facade() { return facade; }
     public AsyncBankingFacade banking() { return banking; }
     public AsyncInstitutionFacade institutions() { return institutions; }
+    public AsyncClusterDirectory clusterDirectory() { return clusterDirectory; }
     public CompletionStage<Result<Void>> readyStage() { return facade.readyStage(); }
     public CompletionStage<Result<IntegrityReport>> verifyNow() { return facade.verifyIntegrity(); }
     public boolean isReadOnly() { return facade.isReadOnly(); }
@@ -107,6 +125,7 @@ public final class BloecoRuntime implements AutoCloseable {
         return new MySqlOutboxPublisher(mysqlDataSource, redis, interval, warningLogger);
     }
     @Override public void close() {
+        if (clusterDirectory != null) clusterDirectory.close();
         if (institutions != null) institutions.close();
         if (banking != null) banking.close();
         facade.close();

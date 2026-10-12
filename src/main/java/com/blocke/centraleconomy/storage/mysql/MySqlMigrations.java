@@ -15,7 +15,7 @@ import java.util.List;
 
 /** Fixed MySQL migration chain. New schema changes must append a version and never edit history. */
 public final class MySqlMigrations {
-    public static final int LATEST_VERSION = 7;
+    public static final int LATEST_VERSION = 8;
 
     private MySqlMigrations() { }
 
@@ -28,7 +28,8 @@ public final class MySqlMigrations {
                 new V004Indexes(),
                 new V005RuntimeIndexes(),
                 new V006BalanceVersion(),
-                new V007EcosystemApi())).migrate();
+                new V007EcosystemApi(),
+                new V008ClusterSync())).migrate();
     }
 
     private static void bridgeLegacyHistory(DataSource source, MySqlTransactionManager transactions) {
@@ -197,6 +198,51 @@ public final class MySqlMigrations {
                 if (columns.next()) return;
             }
             try (Statement statement = connection.createStatement()) { statement.executeUpdate(sql); }
+        }
+    }
+
+    private static final class V008ClusterSync implements Migration {
+        @Override public int version() { return 8; }
+        @Override public String description() { return "cluster_sync"; }
+        @Override public void migrate(Connection connection) throws Exception {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS cluster_nodes (
+                            cluster_id VARCHAR(128) NOT NULL,
+                            server_id VARCHAR(128) NOT NULL,
+                            status VARCHAR(16) NOT NULL,
+                            started_at_epoch_ms BIGINT NOT NULL,
+                            last_seen_epoch_ms BIGINT NOT NULL,
+                            stopped_at_epoch_ms BIGINT NULL,
+                            PRIMARY KEY(cluster_id, server_id)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                        """);
+                statement.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS player_directory (
+                            player_uuid CHAR(36) NOT NULL PRIMARY KEY,
+                            last_known_name VARCHAR(16) NOT NULL,
+                            normalized_name VARCHAR(16) NOT NULL,
+                            server_id VARCHAR(128) NOT NULL,
+                            online BOOLEAN NOT NULL,
+                            last_seen_epoch_ms BIGINT NOT NULL,
+                            INDEX ix_player_directory_name(normalized_name, last_seen_epoch_ms)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                        """);
+                statement.executeUpdate("""
+                        CREATE TABLE IF NOT EXISTS player_notifications (
+                            notification_id CHAR(36) NOT NULL PRIMARY KEY,
+                            entry_id CHAR(36) NOT NULL UNIQUE,
+                            player_uuid CHAR(36) NOT NULL,
+                            amount_minor BIGINT NOT NULL,
+                            created_at_epoch_ms BIGINT NOT NULL,
+                            delivered_at_epoch_ms BIGINT NULL,
+                            delivered_server_id VARCHAR(128) NULL,
+                            INDEX ix_notification_pending(player_uuid, delivered_at_epoch_ms, created_at_epoch_ms),
+                            CONSTRAINT fk_notification_entry FOREIGN KEY(entry_id) REFERENCES journal_entries(entry_id),
+                            CHECK (amount_minor >= 0)
+                        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                        """);
+            }
         }
     }
 }

@@ -43,6 +43,16 @@ redis:
   # Background probe interval while Redis is unavailable (allowed range: 5-30 seconds).
   reconnect-interval-seconds: 10
 
+# Cross-server mode. Every server must use the same MySQL database, Redis and cluster-id,
+# while server-id must be unique. Transfers still commit when Redis is temporarily unavailable.
+cluster:
+  enabled: false
+  cluster-id: production
+  server-id: server-01
+  heartbeat-seconds: 10
+  lease-seconds: 30
+  consumer-group-prefix: "bloeco:v2:cluster:"
+
 integrity:
   check-interval-minutes: 15
 

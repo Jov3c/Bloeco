@@ -11,7 +11,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 | 你要做的事 | 应该使用的入口 | 资金权威 |
 | --- | --- | --- |
 | 玩家查看余额、账单、银行 | `/eco` GUI | Bloeco 钱包与银行账本 |
-| 玩家向在线玩家付款 | `/pay <玩家> <整数>` | Bloeco 原子转账 |
+| 玩家向本服、跨服或已登记的离线玩家付款 | `/pay <玩家> <整数>` | Bloeco 原子转账 |
 | 商店、领地、任务、证券等插件收付款 | 内嵌 `com.blocke.bloeco.api` | Bloeco 机构账户与结算凭证 |
 | 发行、回收、税费和完整性检查 | `/eco` 权限 GUI | 中央银行与复式总账 |
 | 读取事件或加速查询 | Redis（可选） | 只能以 MySQL 已提交事实为准 |
@@ -23,14 +23,16 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 - [银行设计](docs/architecture/banking-foundation-design.md)：存款、贷款、准备金、信用等级和银行 GUI。
 - [原生 API 设计](docs/architecture/native-api-design.md)：类似 Vault 的稳定接口，但 API 直接内嵌在 Bloeco JAR 中。
 - [MySQL/Redis 存储规范](docs/architecture/storage-v2-mysql-redis.md)：事务、迁移、Outbox、缓存降级和 Redis 事件语义。
+- [跨服同步规范](docs/architecture/cross-server-sync.md)：节点租约、玩家目录、可靠通知及故障降级语义。
 - [Agent 指南](AGENTS.md)：修改源码、设计资金流或接入新插件时的工程约束。
 
 ## 当前功能
 
 - MySQL 8.4/InnoDB 默认权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
 - 数据库并发保护：多账户资金操作按 `account_id` 固定顺序一次性 `FOR UPDATE`，物化余额每次更新都会递增 `version`，不依赖 Java 全局锁。
-- 正式版本迁移：V001-V007 顺序执行并逐版记录；V007 增加机构能力、结算、退款与冻结资金结构，迁移失败时经济中心拒绝启动。
+- 正式版本迁移：V001-V008 顺序执行并逐版记录；V008 增加跨服节点、玩家目录和可靠通知，迁移失败时经济中心拒绝启动。
 - Redis 7 默认作为可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
+- 跨服经济：多台 Paper 共享同一 MySQL/Redis，MySQL 是唯一资金权威；`/pay` 支持跨服和已登记的离线玩家，未送达收款通知会在下次登录补发。
 - 整数最小货币单位：金额全程使用 `long`，拒绝浮点误差与超过两位小数的玩家输入。
 - 分级账户：货币当局、财政、机构、玩家四级分类；每个余额都能追溯到复式分录。
 - 受控发行：申请、异人审批、执行三步完成；新货币只能先进入国库，并受单笔、每日和滚动周期政策限制。
@@ -55,7 +57,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 
 ## 最短部署路径
 
-1. 使用 Java 21 和 Paper `1.21.11`，把 `Bloeco-1.5.0-SNAPSHOT.jar` 放入服务器的 `plugins/` 目录。
+1. 使用 Java 21 和 Paper `1.21.11`，把 `Bloeco-1.6.0-SNAPSHOT.jar` 放入服务器的 `plugins/` 目录。
 2. 生产环境创建 MySQL 8.4 数据库，并在启动服务器前设置 `BLOECO_MYSQL_PASSWORD`；默认配置已经选择 `storage.type: mysql`。
 3. 按需启动 Redis 7。Redis 断开时只会关闭缓存和事件加速，不会把余额切换到 Redis，也不会静默退回 SQLite。
 4. 启动 Paper，等待控制台出现 Bloeco ready 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
@@ -66,7 +68,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 ## 玩家使用
 
 - `/eco`：打开经济中心 GUI，可查看余额、最近账单、转账，并进入国有银行办理存取款和贷款。
-- `/pay <在线玩家> <正整数金额>`：快捷转账；在线玩家名和常用整数金额支持补全。
+- `/pay <玩家> <正整数金额>`：快捷转账；单服支持在线玩家，启用跨服后支持其他子服玩家及曾进入集群的离线玩家。
 
 插件只注册 `/eco` 和 `/pay` 两个指令。税收、货币申请与回收、经济总览和总账校验通过 `/eco` 的权限化 GUI 操作；每个子菜单都有“返回上一级”和“主菜单”。
 
@@ -165,6 +167,6 @@ API 版本独立于插件版本：当前公开合同为 `1.0.0`，同一主版�
 gradlew.bat clean test shadowJar
 ```
 
-成品位于 `build/libs/Bloeco-1.5.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动、Redis 客户端和公开 API 1.0 均位于同一个插件包；不需要 Vault 或其他经济前置。
+成品位于 `build/libs/Bloeco-1.6.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动、Redis 客户端和公开 API 1.0 均位于同一个插件包；不需要 Vault 或其他经济前置。
 
 提交前应确认 `git status --short` 没有 `build/`、服务器运行目录、数据库、日志或凭据；JAR 只作为 GitHub Release 附件发布，不提交到源码树。

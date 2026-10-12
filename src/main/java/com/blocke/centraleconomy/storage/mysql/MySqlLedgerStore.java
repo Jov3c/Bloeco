@@ -47,25 +47,32 @@ public final class MySqlLedgerStore implements LedgerStore {
     private final BalanceRepository balanceRepository = new BalanceRepository();
     private final LedgerRepository ledgerRepository = new LedgerRepository();
     private final OutboxRepository outboxRepository = new OutboxRepository();
+    private final boolean durablePlayerNotifications;
 
     public MySqlLedgerStore(String jdbcUrl, String username, String password, int maximumPoolSize) {
         this(new BloecoDataSource(jdbcUrl, username, password, maximumPoolSize));
     }
 
     private MySqlLedgerStore(BloecoDataSource ownedDataSource) {
-        this(ownedDataSource, new MySqlTransactionManager(ownedDataSource.dataSource()), ownedDataSource);
+        this(ownedDataSource, new MySqlTransactionManager(ownedDataSource.dataSource()), ownedDataSource, false);
     }
 
     public MySqlLedgerStore(BloecoDataSource sharedDataSource, MySqlTransactionManager transactions) {
-        this(sharedDataSource, transactions, null);
+        this(sharedDataSource, transactions, false);
+    }
+
+    public MySqlLedgerStore(BloecoDataSource sharedDataSource, MySqlTransactionManager transactions,
+                            boolean durablePlayerNotifications) {
+        this(sharedDataSource, transactions, null, durablePlayerNotifications);
     }
 
     private MySqlLedgerStore(BloecoDataSource source, MySqlTransactionManager transactions,
-                             AutoCloseable ownedDataSource) {
+                             AutoCloseable ownedDataSource, boolean durablePlayerNotifications) {
         this.dataSource = Objects.requireNonNull(source, "source").dataSource();
         this.transactions = Objects.requireNonNull(transactions, "transactions");
         this.connection = new ConnectionScope(dataSource);
         this.ownedDataSource = ownedDataSource;
+        this.durablePlayerNotifications = durablePlayerNotifications;
         MySqlMigrations.migrate(dataSource, transactions);
     }
 
@@ -422,6 +429,9 @@ public final class MySqlLedgerStore implements LedgerStore {
             beginImmediate();
             applyEntry(entry);
             insertPlayerSettlement(settlement);
+            if (durablePlayerNotifications) {
+                outboxRepository.insertPlayerNotification(connection.currentTransaction(), entry, settlement);
+            }
             commitTransaction();
             return settlement;
         } catch (Throwable exception) {

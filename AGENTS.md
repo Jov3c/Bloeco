@@ -26,7 +26,8 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - `domain/banking/`: bank policy and immutable customer/balance-sheet snapshots.
 - `application/banking/`: the asynchronous banking boundary and persistence port.
 - `application/`: central-bank, payment, tax, query, result, and asynchronous use cases. `LedgerStore` is the persistence port.
-- `storage/mysql/`: runtime-owned `BloecoDataSource`, `MySqlTransactionManager`, immutable V001-V007 migrations, repositories, integrity verification, ecosystem settlement, and Outbox publication. Stores must never create a second pool when Runtime supplies the shared source.
+- `storage/mysql/`: runtime-owned `BloecoDataSource`, `MySqlTransactionManager`, immutable V001-V008 migrations, repositories, integrity verification, ecosystem settlement, cluster directory, durable player notifications, and Outbox publication. Stores must never create a second pool when Runtime supplies the shared source.
+- `cluster/`: cross-server contracts, validated node settings, exact player directory, notification payload codec, and bounded asynchronous adapter. MySQL is authoritative; Redis leases and streams are disposable acceleration only.
 - `storage/sqlite/`: SQLite schema, atomic commits, integrity verification, and legacy migration for local/import use.
 - `storage/redis/`: optional cache and Stream bridge; connection failure is a non-authoritative degradation.
 - `paper/`: plugin lifecycle adapters, `/eco`, `/pay`, permissions, GUI screens, and player-facing formatting.
@@ -66,7 +67,7 @@ Redis is an optional accelerator only. `RedisEconomyBridge` moves through `AVAIL
 The public commands are exactly:
 
 - `/eco`: opens the GUI economy centre.
-- `/pay <online-player> <positive-integer>`: quick player transfer with completion.
+- `/pay <player> <positive-integer>`: exact local, cross-server, or known offline player transfer with completion.
 
 Do not add public administration subcommands. Add administration flows to the permission-gated GUI and keep a Back and Main Menu button on every child screen. Permissions are the `bloeco.role.*` nodes declared in `plugin.yml`.
 

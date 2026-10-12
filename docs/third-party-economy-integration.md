@@ -42,7 +42,7 @@ depend: [Bloeco]
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/Bloeco-1.5.0-SNAPSHOT.jar"))
+    compileOnly(files("libs/Bloeco-1.6.0-SNAPSHOT.jar"))
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
 }
 ```
@@ -166,7 +166,7 @@ client.refund(originalOperationId, MoneyAmount.positive(refundMinor),
 
 ## 版本、升级与责任边界
 
-- `Bloeco` 插件版本当前为 `1.5.0-SNAPSHOT`；公开 API 版本当前为 `1.0.0`，两者独立演进。
+- `Bloeco` 插件版本当前为 `1.6.0-SNAPSHOT`；公开 API 版本当前为 `1.0.0`，两者独立演进。跨服同步属于底座运行时能力，不改变接入插件的 API 合同。
 - 1.x 只新增兼容能力，不删除或改变已有方法的含义；Consumer 仍应在启动时检查主版本。
 - Bloeco 升级会保留机构、账户、分录、凭证和幂等记录；不要把数据库迁移当作 Consumer 的启动逻辑。
 - Consumer 可以升级自己的订单或商品模型，但不能回写 Bloeco 账单，也不能用新业务键重放一笔已经得到未知结果的交易。

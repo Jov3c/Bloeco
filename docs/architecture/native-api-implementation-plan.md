@@ -9,7 +9,7 @@
 **Tech Stack:** Java 21, Paper 1.21.11 ServicesManager, Gradle 8 Kotlin DSL, JUnit 5, MockBukkit, MySQL 8.4/InnoDB, SQLite JDBC, HikariCP, Redis/Lettuce Outbox notifications.
 
 **设计基线：** [`docs/architecture/native-api-design.md`](native-api-design.md)<br>
-**实现状态：** 公共 API、机构注册、结算、退款、预授权、MySQL V007、Paper Provider、示例 Consumer 和兼容性测试均已落地；主插件版本为 `1.5.0-SNAPSHOT`，公开 API 版本为 `1.0.0`。
+**实现状态：** 公共 API、机构注册、结算、退款、预授权、MySQL V007、Paper Provider、示例 Consumer 和兼容性测试均已落地；后续 1.6 增加 MySQL V008 跨服同步，公开 API 仍为 `1.0.0`。
 
 ## Global Constraints
 

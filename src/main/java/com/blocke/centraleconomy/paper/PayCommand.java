@@ -16,16 +16,38 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 
 /** Exact, nonblocking player-to-player payment command. */
 public final class PayCommand implements CommandExecutor, TabCompleter {
     private static final List<String> AMOUNT_SUGGESTIONS = List.of("1", "10", "100", "1000");
     private final Plugin plugin;
     private final AsyncEconomyFacade economy;
+    private final PaymentTargetResolver targets;
+    private final boolean notifyLocally;
 
     public PayCommand(Plugin plugin, AsyncEconomyFacade economy) {
+        this(plugin, economy, new PaymentTargetResolver() {
+            @Override public java.util.concurrent.CompletionStage<Optional<PaymentTarget>> resolveExact(String name) {
+                Player player = Bukkit.getPlayerExact(name);
+                return CompletableFuture.completedFuture(player == null || !player.isOnline() ? Optional.empty()
+                        : Optional.of(new PaymentTarget(player.getUniqueId(), player.getName())));
+            }
+            @Override public List<String> suggestions(String prefix) {
+                String normalized = prefix.toLowerCase(Locale.ROOT);
+                return Bukkit.getOnlinePlayers().stream().map(Player::getName)
+                        .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(normalized)).toList();
+            }
+        }, true);
+    }
+
+    public PayCommand(Plugin plugin, AsyncEconomyFacade economy,
+                      PaymentTargetResolver targets, boolean notifyLocally) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
         this.economy = Objects.requireNonNull(economy, "economy");
+        this.targets = Objects.requireNonNull(targets, "targets");
+        this.notifyLocally = notifyLocally;
     }
 
     @Override
@@ -35,15 +57,10 @@ public final class PayCommand implements CommandExecutor, TabCompleter {
             return true;
         }
         if (args.length != 2) {
-            payer.sendMessage("用法：/pay <在线玩家> <金额>");
+            payer.sendMessage("用法：/pay <玩家> <金额>");
             return true;
         }
-        Player recipient = Bukkit.getPlayerExact(args[0]);
-        if (recipient == null || !recipient.isOnline()) {
-            payer.sendMessage("收款玩家不在线。");
-            return true;
-        }
-        if (recipient.getUniqueId().equals(payer.getUniqueId())) {
+        if (args[0].equalsIgnoreCase(payer.getName())) {
             payer.sendMessage("不能给自己转账。");
             return true;
         }
@@ -55,22 +72,33 @@ public final class PayCommand implements CommandExecutor, TabCompleter {
             payer.sendMessage("金额必须是大于零的整数。");
             return true;
         }
-        String key = "command:" + UUID.randomUUID();
-        PlayerPayment payment = new PlayerPayment(payer.getUniqueId(), recipient.getUniqueId(), amount,
-                JournalMemos.playerPayment(payer.getName(), recipient.getName()), key);
-        economy.pay(payment).thenAccept(result -> runMain(() -> {
-            if (!result.isSuccess()) {
-                payer.sendMessage(MessageFormatter.error(result));
+        targets.resolveExact(args[0]).thenAccept(resolved -> {
+            if (resolved.isEmpty()) {
+                runMain(() -> payer.sendMessage("找不到该玩家，请确认名称正确且该玩家至少进入过一次服务器。"));
                 return;
             }
-            var receipt = result.value();
-            payer.sendMessage("已向 " + recipient.getName() + " 转账 "
-                    + MessageFormatter.money(receipt.principal()) + "；手续费 "
-                    + MessageFormatter.money(receipt.fee()) + "，所得税 "
-                    + MessageFormatter.money(receipt.incomeTax()) + "。");
-            recipient.sendMessage("收到来自 " + payer.getName() + " 的 "
-                    + MessageFormatter.money(receipt.recipientNet()) + "。");
-        }));
+            PaymentTarget recipient = resolved.get();
+            if (recipient.playerId().equals(payer.getUniqueId())) {
+                runMain(() -> payer.sendMessage("不能给自己转账。"));
+                return;
+            }
+            String key = "command:" + UUID.randomUUID();
+            PlayerPayment payment = new PlayerPayment(payer.getUniqueId(), recipient.playerId(), amount,
+                    JournalMemos.playerPayment(payer.getName(), recipient.name()), key);
+            economy.pay(payment).thenAccept(result -> runMain(() -> {
+                if (!result.isSuccess()) { payer.sendMessage(MessageFormatter.error(result)); return; }
+                var receipt = result.value();
+                payer.sendMessage("已向 " + recipient.name() + " 转账 "
+                        + MessageFormatter.money(receipt.principal()) + "；手续费 "
+                        + MessageFormatter.money(receipt.fee()) + "，所得税 "
+                        + MessageFormatter.money(receipt.incomeTax()) + "。");
+                if (notifyLocally) {
+                    Player online = Bukkit.getPlayer(recipient.playerId());
+                    if (online != null) online.sendMessage("收到来自 " + payer.getName() + " 的 "
+                            + MessageFormatter.money(receipt.recipientNet()) + "。");
+                }
+            }));
+        });
         payer.sendMessage("转账请求已提交，请稍候。");
         return true;
     }
@@ -79,11 +107,8 @@ public final class PayCommand implements CommandExecutor, TabCompleter {
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
             String prefix = args[0].toLowerCase(Locale.ROOT);
-            return Bukkit.getOnlinePlayers().stream()
-                    .filter(player -> !(sender instanceof Player payer)
-                            || !player.getUniqueId().equals(payer.getUniqueId()))
-                    .map(Player::getName)
-                    .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(prefix))
+            return targets.suggestions(prefix).stream()
+                    .filter(name -> !name.equalsIgnoreCase(sender.getName()))
                     .sorted(String.CASE_INSENSITIVE_ORDER)
                     .toList();
         }
