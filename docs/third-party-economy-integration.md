@@ -1,6 +1,34 @@
 # Bloeco 原生经济 API 1.0 接入规范
 
+> **适用版本：** Bloeco `1.5.x` · API `1.0.x` · Paper `1.21.11`<br>
+> **文档性质：** 对外兼容合同。实现细节、数据库表和 Redis 主题都不属于 Consumer 的兼容面。
+
 Bloeco 1.5 内嵌并通过 Paper `ServicesManager` 发布 `com.blocke.bloeco.api.BloecoApi`。商店、证券、领地、拍卖、任务等插件只保存自己的业务数据；玩家余额、机构账户、税费、冻结资金、退款和永久账单全部由 Bloeco 管理。
+
+这份文档回答三个问题：如何发现 API、如何提交一笔不会重复扣款的结算、如何在异常或结果未知时安全恢复。若只想快速接入，先按下面的清单完成；若要实现订单、拍卖或证券等延迟交付业务，再阅读“冻结资金”章节。
+
+## 一页接入清单
+
+1. 在 `plugin.yml` 写 `depend: [Bloeco]`，把 Bloeco JAR 设为 `compileOnly`。
+2. 从 `ServicesManager` 获取 `BloecoApi`，检查 `supportsMajor(1)`；不存在或版本不兼容时让本插件失败关闭。
+3. 用稳定、永久不变的 `clientId` 注册机构，并只声明本插件真正需要的能力。
+4. 为每次写操作生成稳定的 `businessReference` 和 `idempotencyKey`；重试必须复用原键。
+5. 金额使用 `long` 最小货币单位，玩家可见说明使用中文 `displayMemo`，不要把 UUID、堆栈或 JSON 写进账单。
+6. 只在 `COMMITTED` 回执后交付商品、完成订单或改变本插件的最终业务状态。
+7. 收到 `RESULT_UNKNOWN`、`STORAGE_UNAVAILABLE` 或 `INTEGRITY_READ_ONLY` 时停止交付，查询或用原键恢复；禁止本地补余额。
+
+## 能力与方法对应
+
+| 能力 | 允许的动作 | 常见业务 |
+| --- | --- | --- |
+| `CHARGE_PLAYER` | 从玩家钱包收款，自动计算中央消费税 | 商店购买、服务费 |
+| `PAY_PLAYER` | 从本机构已有余额向玩家付款 | 任务奖励、退款外的提现 |
+| `REFUND` | 按原收款凭证全额或分批退款 | 订单取消、售后 |
+| `RESERVE_PLAYER_FUNDS` | 冻结玩家可用余额，等待后续捕获或释放 | 拍卖、证券委托 |
+| `READ_OWN_BALANCE` | 查询本机构账户余额和玩家钱包 | 余额展示、风控提示 |
+| `READ_OWN_JOURNAL` | 查询本机构账单和永久凭证 | 对账、客服审计 |
+
+Bloeco 不提供 `give`、`depositPlayer`、`setBalance` 或任意 Posting 接口。业务插件需要发钱时，必须先拥有机构余额；余额不足就失败，不会隐式发行货币。
 
 ## 依赖与发现
 
@@ -62,6 +90,21 @@ Bloeco 会创建默认 `operating` 账户及声明的用途账户。账户句柄
 
 队列已满、正在关闭或数据库不可用时返回 `STORAGE_UNAVAILABLE`，不会泄漏线程池异常。Bloeco 完整性只读时写操作返回 `INTEGRITY_READ_ONLY`，查询仍可用。业务插件不得启用本地备用余额。
 
+## 一笔结算的正确生命周期
+
+```text
+业务插件创建订单
+        │
+        ▼
+使用稳定幂等键调用 Bloeco
+        │
+        ├─ COMMITTED ──► 记录已付款并交付
+        ├─ 业务失败 ───► 保持未付款，不交付
+        └─ RESULT_UNKNOWN ─► 用原键查询/重试，不换键
+```
+
+Bloeco 只有在权威 SQL 事务提交后才返回 `COMMITTED`。回调线程不保证是 Paper 主线程；Consumer 处理 Bukkit 玩家、背包、世界或 GUI 前，必须切回自己的 Paper 调度器。订单状态应以 Bloeco 回执为准，而不是以“调用 Future 没有抛异常”为准。
+
 ## 收款、付款与税收
 
 金额为 `long` 最小货币单位，两位小数货币中 `10000` 表示 `100.00`。禁止 `double`。
@@ -120,3 +163,11 @@ client.refund(originalOperationId, MoneyAmount.positive(refundMinor),
 禁止连接 Bloeco 的 MySQL、SQLite 或 Redis，禁止反射内部类。Redis 只是可重建缓存和提交后事件传输，不是余额确认依据。所有普通结算都是守恒分录；只有央行审批发行能增加供给，只有回收分录能减少供给。
 
 完整可编译示例位于 `examples/bloeco-api-consumer`。API 使用独立语义版本；1.x 内保持二进制兼容，消费者必须对未知主版本失败关闭。
+
+## 版本、升级与责任边界
+
+- `Bloeco` 插件版本当前为 `1.5.0-SNAPSHOT`；公开 API 版本当前为 `1.0.0`，两者独立演进。
+- 1.x 只新增兼容能力，不删除或改变已有方法的含义；Consumer 仍应在启动时检查主版本。
+- Bloeco 升级会保留机构、账户、分录、凭证和幂等记录；不要把数据库迁移当作 Consumer 的启动逻辑。
+- Consumer 可以升级自己的订单或商品模型，但不能回写 Bloeco 账单，也不能用新业务键重放一笔已经得到未知结果的交易。
+- 发现接口或资金事实与本合同不一致时，应先停止写入并报告，而不是通过反射或直连数据库绕过合同。

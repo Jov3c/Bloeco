@@ -1,6 +1,8 @@
 # Bloeco Agent Guide
 
-This file is the first technical reference for coding agents working in this repository. Read it together with `README.md`, `docs/architecture/central-bank-design.md`, and `docs/third-party-economy-integration.md` before changing money flows.
+This file is the first technical reference for coding agents working in this repository. Read it together with `README.md`, `docs/README.md`, `docs/architecture/central-bank-design.md`, and `docs/third-party-economy-integration.md` before changing money flows.
+
+The public integration contract is `docs/third-party-economy-integration.md`; the Java types under `src/main/java/com/blocke/bloeco/api` are the executable API boundary. Architecture documents explain implementation decisions but never grant consumers permission to access internal classes, SQL tables, or Redis directly.
 
 ## Product boundary
 
@@ -32,6 +34,7 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - `src/test/`: domain, storage, application, command, and GUI regression tests.
 - `docs/architecture/central-bank-design.md`: authoritative design and supply model.
 - `docs/third-party-economy-integration.md`: external integration contract and failure semantics.
+- `docs/README.md`: documentation index and maintenance rules.
 
 ## Monetary invariants
 
@@ -99,3 +102,5 @@ Run:
 On Windows use `gradlew.bat`. Add a failing regression test before production behavior changes, then run the focused test and the full suite. Inspect the shaded JAR's `plugin.yml` and `config.yml` before release. MySQL changes also require the gated integration suite and concurrency stress test against an isolated MySQL database.
 
 Keep GitHub source clean: commit source, tests, Gradle files, README, and product/technical documentation only. Never commit build output, Paper runtime data, worlds, logs, databases, caches, IDE state, local plans, credentials, or generated QA artifacts. Release JARs belong in GitHub Releases, not in the source tree.
+
+Before changing an API method, error code, settlement rule, or schema migration, update the executable compatibility test and the relevant public/architecture documentation in the same change. Before pushing, run `gradlew.bat clean test shadowJar`, inspect the shaded JAR manifest/resources, and verify `git status --short` contains no build or runtime files.

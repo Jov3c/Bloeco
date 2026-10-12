@@ -1,8 +1,29 @@
 # Bloeco
 
-Bloeco 是面向 Paper `1.21.11` 的独立中央经济系统，也是整个 Bloeco 系列经济插件的统一底座。它统一管理货币供给、玩家余额、机构账户、国库、税收、手续费和永久账单，核心目标是减少服务器经济中的无约束增发与通货膨胀。
+> Paper `1.21.11` 的中央经济底座 · Java 21 · MySQL 权威账本 · 内嵌 Native Economy API 1.0
 
-Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物品交付，也不依赖或注册 Vault。后续所有经济业务插件都以 Bloeco 为底座，通过 Bloeco 原生接口获得自己的机构账本并完成资金结算，不能直接修改玩家余额、数据库或维护第二套可消费货币。
+Bloeco 是整个 Bloeco 系列插件共用的中央银行与总账系统。它统一管理货币供给、玩家余额、机构账户、国库、税收、手续费、冻结资金和永久账单，所有资金变化都必须落到可审计的复式分录中。设计重点不是“让插件能加钱”，而是让每一笔钱都能回答三个问题：钱从哪里来、现在属于谁、出了问题如何幂等恢复。
+
+Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物品交付，也不依赖或注册 Vault。后续经济业务插件以 Bloeco 为唯一资金底座，通过内嵌的 Native Economy API 获得自己的机构账本并完成结算；业务插件不能直接修改玩家余额、连接 Bloeco 数据库，或维护第二套可消费货币。
+
+## 先看结论
+
+| 你要做的事 | 应该使用的入口 | 资金权威 |
+| --- | --- | --- |
+| 玩家查看余额、账单、银行 | `/eco` GUI | Bloeco 钱包与银行账本 |
+| 玩家向在线玩家付款 | `/pay <玩家> <整数>` | Bloeco 原子转账 |
+| 商店、领地、任务、证券等插件收付款 | 内嵌 `com.blocke.bloeco.api` | Bloeco 机构账户与结算凭证 |
+| 发行、回收、税费和完整性检查 | `/eco` 权限 GUI | 中央银行与复式总账 |
+| 读取事件或加速查询 | Redis（可选） | 只能以 MySQL 已提交事实为准 |
+
+## 文档导航
+
+- [第三方接入规范](docs/third-party-economy-integration.md)：给商店、领地、任务、证券等插件作者的唯一接入合同。
+- [系统设计](docs/architecture/central-bank-design.md)：货币供给、账户分级、税费、发行回收和反通胀边界。
+- [银行设计](docs/architecture/banking-foundation-design.md)：存款、贷款、准备金、信用等级和银行 GUI。
+- [原生 API 设计](docs/architecture/native-api-design.md)：类似 Vault 的稳定接口，但 API 直接内嵌在 Bloeco JAR 中。
+- [MySQL/Redis 存储规范](docs/architecture/storage-v2-mysql-redis.md)：事务、迁移、Outbox、缓存降级和 Redis 事件语义。
+- [Agent 指南](AGENTS.md)：修改源码、设计资金流或接入新插件时的工程约束。
 
 ## 当前功能
 
@@ -31,6 +52,16 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 - 国有银行：银行初始资本由国库真实划拨，支持活期存款、按日应计存款利息、取款、年化固定利率贷款、部分或全部还款、到期/逾期提示和信用等级；预设金额之外可在聊天栏输入自定义金额。
 - 反通胀放贷：贷款只从 `bank:cash` 转给玩家，受准备金率、银行现金、放贷开关和单人贷款上限约束；贷款不会调用货币发行。
 - 银行经营 GUI：具有 `bloeco.role.banker` 权限的管理员可在 `/eco` 中查看资产负债表，并调整存款利率、贷款利率、准备金率、贷款上限和放贷开关。
+
+## 最短部署路径
+
+1. 使用 Java 21 和 Paper `1.21.11`，把 `Bloeco-1.5.0-SNAPSHOT.jar` 放入服务器的 `plugins/` 目录。
+2. 生产环境创建 MySQL 8.4 数据库，并在启动服务器前设置 `BLOECO_MYSQL_PASSWORD`；默认配置已经选择 `storage.type: mysql`。
+3. 按需启动 Redis 7。Redis 断开时只会关闭缓存和事件加速，不会把余额切换到 Redis，也不会静默退回 SQLite。
+4. 启动 Paper，等待控制台出现 Bloeco ready 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
+5. 业务插件只安装自己的 JAR，并按照[第三方接入规范](docs/third-party-economy-integration.md)通过 `ServicesManager` 发现 API；不要复制 API 类或连接 Bloeco 数据库。
+
+本地开发可以显式改为 `storage.type: sqlite`，但 SQLite 只用于开发、离线测试和导入。生产环境不能依赖“数据库不可用时自动换库”，否则会形成两套互不一致的经济事实。
 
 ## 玩家使用
 
@@ -109,6 +140,17 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 
 消费者在 `plugin.yml` 声明 `depend: [Bloeco]`，将 Bloeco JAR 设为 `compileOnly`，再从 Paper `ServicesManager` 获取 `BloecoApi`。不要 shade API 类，也不要在主线程等待数据库 Future。完整示例见 [examples/bloeco-api-consumer](examples/bloeco-api-consumer)。
 
+接入 API 时只需要记住四条合同：
+
+| 合同 | 规则 |
+| --- | --- |
+| 资金来源 | `chargePlayer` 从玩家钱包收款；`payPlayer` 只能从本机构已有余额付款；没有 `give`、`setBalance` 或无来源入账接口。 |
+| 金额表示 | 使用 `long` 最小货币单位，`10000` 表示 `100.00`；禁止 `double`。 |
+| 结果处理 | 只有收到 `COMMITTED` 回执后才能交付物品或把订单标记为已付款；`RESULT_UNKNOWN` 必须使用原幂等键查询或重试。 |
+| 数据边界 | 业务插件保存订单和商品，Bloeco 保存余额、税费、冻结资金、账单与分录；不得直连数据库或 Redis。 |
+
+API 版本独立于插件版本：当前公开合同为 `1.0.0`，同一主版本保持二进制兼容；不支持的主版本必须失败关闭。字段约束、税费快照、退款、预授权和错误码详见[接入规范](docs/third-party-economy-integration.md)。
+
 完整的中央银行设计见 [系统设计](docs/architecture/central-bank-design.md)。
 
 ## 构建
@@ -116,7 +158,13 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 需要 Java 21：
 
 ```text
+# Linux / macOS
 ./gradlew clean test shadowJar
+
+# Windows
+gradlew.bat clean test shadowJar
 ```
 
 成品位于 `build/libs/Bloeco-1.5.0-SNAPSHOT.jar`。MySQL、HikariCP、SQLite 迁移驱动、Redis 客户端和公开 API 1.0 均位于同一个插件包；不需要 Vault 或其他经济前置。
+
+提交前应确认 `git status --short` 没有 `build/`、服务器运行目录、数据库、日志或凭据；JAR 只作为 GitHub Release 附件发布，不提交到源码树。

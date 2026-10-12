@@ -1,6 +1,6 @@
 # Bloeco Native Economy API 1.0 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **文档状态：** 实施记录（已完成）。本文保留 API 1.0 的目标、验收关注点和代码映射，方便维护者追溯设计；它不是运行时兼容合同，也不是当前待办清单。对外接入以 [`docs/third-party-economy-integration.md`](../third-party-economy-integration.md) 为准。
 
 **Goal:** Embed a stable Vault-like Bloeco economy API in the main plugin so Bloeco-family commerce, land, quest, auction, and securities plugins can register institutions and perform conserved, auditable settlements without using internal classes or databases.
 
@@ -8,7 +8,8 @@
 
 **Tech Stack:** Java 21, Paper 1.21.11 ServicesManager, Gradle 8 Kotlin DSL, JUnit 5, MockBukkit, MySQL 8.4/InnoDB, SQLite JDBC, HikariCP, Redis/Lettuce Outbox notifications.
 
-**Spec:** `docs/architecture/native-api-design.md`
+**设计基线：** [`docs/architecture/native-api-design.md`](native-api-design.md)<br>
+**实现状态：** 公共 API、机构注册、结算、退款、预授权、MySQL V007、Paper Provider、示例 Consumer 和兼容性测试均已落地；主插件版本为 `1.5.0-SNAPSHOT`，公开 API 版本为 `1.0.0`。
 
 ## Global Constraints
 

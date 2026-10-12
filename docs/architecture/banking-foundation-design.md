@@ -1,7 +1,7 @@
 # Bloeco 银行基础架构设计
 
-状态：Bloeco 1.3 已实现基线（源码版本；是否发布 Release 由发布流程另行决定）
-适用版本：Bloeco 1.3 及后续版本  
+状态：Bloeco 1.5 已实现基线（源码版本；是否发布 Release 由发布流程另行决定）
+适用版本：Bloeco 1.5 及后续版本
 平台：Paper 1.21.11、Java 21、MySQL 8.4、Redis 7+
 
 ## 1. 目标与边界
@@ -12,7 +12,7 @@ Bloeco 在保持唯一货币权威账本的前提下增加国有银行能力。�
 
 Bloeco 负责经济事实；未来外部插件负责订单、持仓、领地权限等业务事实。外部插件只能调用公开 API，不能访问 Bloeco 数据库或 Redis。
 
-Bloeco 1.3 包含：
+Bloeco 1.5 已实现：
 
 - 单一国有银行及其资产负债表。
 - 活期存款、存入和取出。
@@ -20,6 +20,7 @@ Bloeco 1.3 包含：
 - 信用等级、准备金率、贷款开关和银行管理员 GUI。
 - 幂等银行结算、政策审计、MySQL Outbox 和崩溃恢复。
 - `/eco` 玩家银行、账户详情、A–D 信用说明、聊天自定义金额和权限化银行管理 GUI。
+- 内嵌 Native Economy API 1.0；外部插件通过 `ServicesManager` 使用机构账本和结算，不直连银行表。
 
 第一版不包含：
 
@@ -178,7 +179,7 @@ GUI 在预设金额按钮上同时显示年化利率、期限、预计利息和�
 
 ## 8. 银行政策与风险限制
 
-Bloeco 1.3 的贷款额度取以下上限的最小值：
+Bloeco 1.5 的贷款额度取以下上限的最小值：
 
 ```text
 银行可贷现金上限
@@ -199,7 +200,7 @@ bank:cash >= withdrawableDeposits * reserveRatio
 
 ## 9. 数据库表
 
-Bloeco 1.3 已实现的银行表：
+Bloeco 1.5 已实现的银行表：
 
 ```text
 banks
@@ -215,20 +216,20 @@ bank_operations
 
 ## 10. Native API
 
-当前银行能力只由 Bloeco 内部的异步 `AsyncBankingFacade` 和 `/eco` GUI 使用，不对第三方插件开放。未来发布独立、版本化的 API artifact 后，再通过 Paper `ServicesManager` 注册以下边界：
+Bloeco 1.5 已把 Native Economy API 1.0 内嵌在主插件 JAR，并在数据库迁移、完整性校验和运行时就绪后通过 Paper `ServicesManager` 注册 `BloecoApi`。API 与实现不拆成第二个前置；Consumer 以 `compileOnly` 引用 Bloeco JAR，并声明 `depend: [Bloeco]`。
 
 ```text
 BloecoApi
-├── economy()
-├── institutions()
-├── settlement()
-├── banking()
-└── adminReadOnly()
+├── connect(plugin, descriptor)
+└── InstitutionClient
+    ├── walletBalance / balance / recentTransactions
+    ├── chargePlayer / payPlayer / refund
+    └── reservePlayerFunds / captureReservation / releaseReservation
 ```
 
-所有写请求包含机构身份、业务类型、业务引用、中文显示说明和稳定幂等键。API 返回 `CompletionStage<Result<T>>`；超时代表结果未知，不代表失败。
+所有写请求包含机构身份、业务类型、业务引用、中文显示说明和稳定幂等键。API 返回 `CompletionStage<EconomyResult<T>>`；超时代表结果未知，不代表失败。外部插件无权提交任意 Posting，也不能调用无来源的 `give`、`setBalance` 或银行存贷款接口。
 
-外部插件无权提交任意 Posting。它们只能调用经过验证的结算动作，Bloeco 根据账户所有权、机构能力、税费规则和余额生成分录。
+完整的字段约束、错误码和恢复流程以 [`docs/third-party-economy-integration.md`](../third-party-economy-integration.md) 为准。
 
 ## 11. Redis 与 Outbox
 
@@ -311,9 +312,9 @@ reserved_minor = ACTIVE fund_reservations 合计
 
 引入 `MySqlTransactionManager`，按事务获取连接；拆分核心 Repository；保持现有余额、支付、税收、发行和 GUI 行为不变。
 
-### Phase B：机构结算（待独立 API 版本）
+### Phase B：机构结算（已完成）
 
-落地 Institution、Reservation、Settlement、幂等查询和第一版 Native API。
+已落地 Institution、Reservation、Settlement、幂等查询、MySQL V007 和第一版 Native API。API 继续内嵌在 Bloeco 主插件中，不发布独立 API JAR。
 
 ### Phase C：存款银行（已完成）
 
@@ -333,6 +334,6 @@ reserved_minor = ACTIVE fund_reservations 合计
 
 ## 16. 发布策略
 
-Phase A 和 Phase B 属于兼容性重构，不修改现有货币或玩家余额。每个数据库版本都必须先在复制数据上完成迁移、完整性校验和回滚演练。
+Phase A 和 Phase B 属于兼容性重构，不修改既有货币或玩家余额。每个数据库版本都必须先在复制数据上完成迁移、完整性校验和回滚演练；当前对外接入合同以 API 1.0 文档为准。
 
 银行首次初始化只有在数据库迁移、初始资本真实划拨和完整性检查成功后才开放 GUI 写操作；任一步失败均保持不可用或只读，不得用 SQLite、Redis 或新增发行作为兜底。
