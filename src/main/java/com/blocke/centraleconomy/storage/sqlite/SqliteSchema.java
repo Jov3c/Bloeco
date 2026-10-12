@@ -6,7 +6,7 @@ import java.sql.Statement;
 
 /** Creates the version 2 central-journal schema on a new SQLite database. */
 final class SqliteSchema {
-    static final int VERSION = 4;
+    static final int VERSION = 5;
 
     private SqliteSchema() {}
 
@@ -35,6 +35,26 @@ final class SqliteSchema {
                     CREATE TABLE IF NOT EXISTS account_balances (
                         account_id TEXT PRIMARY KEY REFERENCES accounts(account_id),
                         balance_minor INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS institutions (
+                        institution_id TEXT PRIMARY KEY,
+                        display_name TEXT NOT NULL,
+                        plugin_name TEXT NOT NULL,
+                        plugin_main_class TEXT NOT NULL,
+                        plugin_version TEXT NOT NULL,
+                        api_major INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at_epoch_ms INTEGER NOT NULL,
+                        updated_at_epoch_ms INTEGER NOT NULL
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS institution_capabilities (
+                        institution_id TEXT NOT NULL REFERENCES institutions(institution_id),
+                        capability TEXT NOT NULL,
+                        PRIMARY KEY(institution_id, capability)
                     )
                     """);
             statement.executeUpdate("""

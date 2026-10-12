@@ -187,6 +187,7 @@ public final class AsyncBankingFacade implements AutoCloseable {
             case INSUFFICIENT_FUNDS -> ErrorCode.INSUFFICIENT_FUNDS;
             case IDEMPOTENCY_CONFLICT -> ErrorCode.IDEMPOTENCY_CONFLICT;
             case POLICY_REJECTED -> ErrorCode.POLICY_REJECTED;
+            case UNAUTHORIZED, CAPABILITY_DENIED -> ErrorCode.UNAUTHORIZED;
             case INTEGRITY_FAILURE -> ErrorCode.INTEGRITY_FAILURE;
             case STORAGE_UNAVAILABLE -> ErrorCode.STORAGE_UNAVAILABLE;
         };

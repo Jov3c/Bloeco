@@ -24,6 +24,8 @@ public final class LedgerException extends RuntimeException {
         ACCOUNT_NOT_FOUND,
         ACCOUNT_FROZEN,
         INSUFFICIENT_FUNDS,
+        UNAUTHORIZED,
+        CAPABILITY_DENIED,
         IDEMPOTENCY_CONFLICT,
         POLICY_REJECTED,
         INTEGRITY_FAILURE,

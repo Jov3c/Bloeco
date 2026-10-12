@@ -297,6 +297,7 @@ public final class AsyncEconomyFacade implements AutoCloseable {
             case ACCOUNT_NOT_FOUND -> ErrorCode.ACCOUNT_NOT_FOUND;
             case ACCOUNT_FROZEN -> ErrorCode.ACCOUNT_FROZEN;
             case INSUFFICIENT_FUNDS -> ErrorCode.INSUFFICIENT_FUNDS;
+            case UNAUTHORIZED, CAPABILITY_DENIED -> ErrorCode.UNAUTHORIZED;
             case IDEMPOTENCY_CONFLICT -> ErrorCode.IDEMPOTENCY_CONFLICT;
             case POLICY_REJECTED -> ErrorCode.POLICY_REJECTED;
             case INTEGRITY_FAILURE -> ErrorCode.INTEGRITY_FAILURE;
