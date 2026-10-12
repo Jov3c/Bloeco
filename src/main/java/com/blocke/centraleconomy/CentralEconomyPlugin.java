@@ -6,6 +6,8 @@ import com.blocke.centraleconomy.paper.EcoCommand;
 import com.blocke.centraleconomy.paper.PayCommand;
 import com.blocke.centraleconomy.paper.RoleAccess;
 import com.blocke.centraleconomy.paper.PlayerStarterFundsListener;
+import com.blocke.centraleconomy.paper.BloecoApiProvider;
+import com.blocke.bloeco.api.BloecoApi;
 import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.storage.redis.RedisEconomyBridge;
@@ -14,6 +16,7 @@ import com.blocke.centraleconomy.config.ConfigurationSnapshot;
 import com.blocke.centraleconomy.config.ConfigurationValidator;
 import java.time.Duration;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.plugin.ServicePriority;
 
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +26,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
     private BloecoRuntime runtime;
     private RedisEconomyBridge redisBridge;
     private MySqlOutboxPublisher outboxPublisher;
+    private BloecoApiProvider apiProvider;
 
     @Override
     public void onEnable() {
@@ -40,6 +44,12 @@ public class CentralEconomyPlugin extends JavaPlugin {
         BankingPolicy bankPolicy = configuredBankPolicy();
         validateStartupConfiguration(storageType, initialTreasury, initialPlayerBalance, bankCapital, bankPolicy);
         runtime = createRuntime(storageType, initialTreasury, bankCapital, bankPolicy);
+        runtime.readyStage().thenAccept(result -> {
+            if (!result.isSuccess() || !isEnabled() || apiProvider != null) return;
+            apiProvider = new BloecoApiProvider(runtime.institutions());
+            getServer().getServicesManager().register(BloecoApi.class, apiProvider, this, ServicePriority.Normal);
+            getLogger().info("Bloeco ecosystem API is ready (API " + apiProvider.version() + ").");
+        });
         connectRedisIfEnabled(storageType);
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
@@ -60,6 +70,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (apiProvider != null) {
+            getServer().getServicesManager().unregister(apiProvider);
+            apiProvider = null;
+        }
         if (outboxPublisher != null) {
             outboxPublisher.close();
             outboxPublisher = null;
@@ -83,7 +97,8 @@ public class CentralEconomyPlugin extends JavaPlugin {
         if ("sqlite".equalsIgnoreCase(storageType)) {
             return BloecoRuntime.sqlite(getDataFolder().toPath().resolve(
                     getConfig().getString("storage.sqlite.file", "economy.db")),
-                    initialTreasury, bankCapital, bankPolicy);
+                    initialTreasury, bankCapital, bankPolicy,
+                    Math.max(8, getConfig().getInt("ecosystem-api.queue-capacity", 256)));
         }
         if (!"mysql".equalsIgnoreCase(storageType)) {
             throw new IllegalArgumentException("storage.type must be mysql or sqlite");
@@ -95,8 +110,10 @@ public class CentralEconomyPlugin extends JavaPlugin {
         if (jdbcUrl == null || jdbcUrl.isBlank() || username == null || username.isBlank()) {
             throw new IllegalArgumentException("storage.mysql.jdbc-url and username are required");
         }
+        int workers = Math.max(2, getConfig().getInt("ecosystem-api.mysql-workers", 4));
+        int queue = Math.max(8, getConfig().getInt("ecosystem-api.queue-capacity", 256));
         return BloecoRuntime.mysql(jdbcUrl, username, password, poolSize,
-                initialTreasury, bankCapital, bankPolicy);
+                initialTreasury, bankCapital, bankPolicy, workers, queue);
     }
 
     private BankingPolicy configuredBankPolicy() {

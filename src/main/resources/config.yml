@@ -45,3 +45,8 @@ redis:
 
 integrity:
   check-interval-minutes: 15
+
+# Bounded asynchronous integration API used by Bloeco ecosystem plugins.
+ecosystem-api:
+  mysql-workers: 4
+  queue-capacity: 256
