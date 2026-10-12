@@ -40,7 +40,7 @@ public final class FundReservationService {
         Money tax = rule.charge(principal);
         return store.reserve(new EcosystemStore.ReservationCommand(UUID.randomUUID(), clientId, playerId,
                 principal, tax, rule.versionId(), expiresAt, clock.instant(), context.idempotencyKey(),
-                fingerprint("RESERVE", clientId, playerId, principal.minor(), tax.minor(), expiresAt,
+                fingerprint("RESERVE", clientId, playerId, principal.minor(), expiresAt,
                         context.businessType(), context.businessReference(), context.displayMemo())));
     }
 

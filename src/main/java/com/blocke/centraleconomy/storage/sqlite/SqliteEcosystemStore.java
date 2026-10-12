@@ -701,7 +701,9 @@ public final class SqliteEcosystemStore implements EcosystemStore {
         Map<AccountId, Long> deltas = new LinkedHashMap<>();
         for (BalanceDelta delta : rawDeltas) deltas.merge(delta.accountId(), delta.amount(), Math::addExact);
         deltas.entrySet().removeIf(entry -> entry.getValue() == 0);
-        if (deltas.size() < 2 || deltas.values().stream().mapToLong(Long::longValue).sum() != 0) {
+        long journalSum = 0;
+        for (long value : deltas.values()) journalSum = Math.addExact(journalSum, value);
+        if (deltas.size() < 2 || journalSum != 0) {
             throw new LedgerException(LedgerException.Code.INVALID_JOURNAL,
                     "ecosystem settlement journal is not balanced");
         }

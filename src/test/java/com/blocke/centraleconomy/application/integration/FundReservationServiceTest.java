@@ -8,6 +8,7 @@ import com.blocke.centraleconomy.application.TaxRuleService;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.LedgerException;
 import com.blocke.centraleconomy.domain.money.Money;
+import com.blocke.centraleconomy.domain.tax.TaxCategory;
 import com.blocke.centraleconomy.storage.sqlite.SqliteEcosystemStore;
 import com.blocke.centraleconomy.storage.sqlite.SqliteLedgerStore;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,8 @@ class FundReservationServiceTest {
                     Money.ofMinor(10_000), CLOCK.instant().plusSeconds(60), context("竞拍冻结", "reserve-1"));
             assertEquals(10_500, fixture.store.reservedBalance(PLAYER));
             assertEquals(9_500, fixture.store.availableBalance(PLAYER));
+            new TaxRuleService(fixture.ledger, CLOCK).change(TaxCategory.PLUGIN_CONSUMPTION,
+                    1_000, 0, "test", "税率调整");
             assertEquals(reserved.reservationId(), fixture.service.reserve("bloeco.auction", PLAYER,
                     Money.ofMinor(10_000), CLOCK.instant().plusSeconds(60),
                     context("竞拍冻结", "reserve-1")).reservationId());
