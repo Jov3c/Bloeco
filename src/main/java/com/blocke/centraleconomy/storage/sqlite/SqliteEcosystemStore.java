@@ -31,7 +31,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-/** SQLite development/test implementation of the ecosystem institution boundary. */
 public final class SqliteEcosystemStore implements EcosystemStore {
     private final Connection connection;
     private boolean closed;

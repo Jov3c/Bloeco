@@ -4,7 +4,6 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 
-/** Creates the version 2 central-journal schema on a new SQLite database. */
 final class SqliteSchema {
     static final int VERSION = 6;
 

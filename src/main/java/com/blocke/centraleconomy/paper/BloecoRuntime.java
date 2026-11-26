@@ -24,17 +24,12 @@ import java.util.concurrent.CompletionStage;
 import java.time.Duration;
 import java.util.function.Consumer;
 
-/** Paper lifecycle owner for the asynchronous economy core. */
 public final class BloecoRuntime implements AutoCloseable {
     private final AsyncEconomyFacade facade;
     private final AsyncBankingFacade banking;
     private final BloecoDataSource mysqlDataSource;
     private final AsyncInstitutionFacade institutions;
     private final AsyncClusterDirectory clusterDirectory;
-
-    private BloecoRuntime(AsyncEconomyFacade facade, AsyncBankingFacade banking) {
-        this(facade, banking, null, null, null);
-    }
 
     private BloecoRuntime(AsyncEconomyFacade facade, AsyncBankingFacade banking,
                           BloecoDataSource mysqlDataSource, AsyncInstitutionFacade institutions,
@@ -124,7 +119,8 @@ public final class BloecoRuntime implements AutoCloseable {
         if (mysqlDataSource == null) throw new IllegalStateException("Outbox 仅适用于 MySQL 模式");
         return new MySqlOutboxPublisher(mysqlDataSource, redis, interval, warningLogger);
     }
-    @Override public void close() {
+    @Override
+    public void close() {
         if (clusterDirectory != null) clusterDirectory.close();
         if (institutions != null) institutions.close();
         if (banking != null) banking.close();

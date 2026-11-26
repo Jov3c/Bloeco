@@ -15,8 +15,8 @@ Bloeco does not implement shops, auctions, securities, quests, item delivery, pr
 - Java 21.
 - Paper API `1.21.11-R0.1-SNAPSHOT`.
 - Gradle 8 with Kotlin build scripts and the Shadow plugin.
-- MySQL Connector/J `9.1.0` with HikariCP `6.2.1`; MySQL 8.4/InnoDB is the production authority.
-- SQLite JDBC `3.47.1.0` remains an explicit development/test/import backend, never an automatic failover.
+- MySQL Connector/J `9.1.0` with HikariCP `6.2.1`; MySQL 8.4/InnoDB is the optional backend required for cross-server deployments.
+- SQLite JDBC `3.47.1.0` is the default single-server backend and supports development, tests, and imports. It is never an automatic failover.
 - JUnit 5 and MockBukkit for automated tests.
 - Lettuce `6.5.0.RELEASE` connects to Redis 7 for rebuildable cache and Redis Stream notifications. Redis must never be a balance or journal source of truth.
 

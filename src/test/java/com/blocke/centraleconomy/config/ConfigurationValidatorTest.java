@@ -37,11 +37,11 @@ class ConfigurationValidatorTest {
     }
 
     @Test
-    void allowsSqliteWithRedisDisabled() {
+    void ignoresUnusedRedisSettingsInSqliteMode() {
         ConfigurationSnapshot snapshot = new ConfigurationSnapshot(
-                "sqlite", "", "", false, "", 4, 60,
+                "sqlite", "", "", true, "", 4, 0,
                 1_000_000, 100, 250_000, 100, 320, 100, 100, 320, 2_000, 10_000,
-                7, 15, 10);
+                7, 15, 0);
 
         assertTrue(ConfigurationValidator.validate(snapshot).isEmpty());
     }

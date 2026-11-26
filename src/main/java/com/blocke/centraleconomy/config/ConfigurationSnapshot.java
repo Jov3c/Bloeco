@@ -1,6 +1,5 @@
 package com.blocke.centraleconomy.config;
 
-/** Immutable startup configuration values used by the pure validator. */
 public record ConfigurationSnapshot(
         String storageType,
         String mysqlJdbcUrl,

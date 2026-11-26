@@ -40,7 +40,15 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.test {
     useJUnitPlatform()
-    systemProperty("bloeco.test.storage", "sqlite")
+    environment("BLOECO_MYSQL_STRESS", "true")
+    outputs.upToDateWhen { false }
+    doFirst {
+        val required = listOf("BLOECO_MYSQL_TEST_URL", "BLOECO_MYSQL_TEST_USER", "BLOECO_MYSQL_TEST_PASSWORD")
+        val missing = required.filter { System.getenv(it).isNullOrBlank() }
+        if (missing.isNotEmpty()) {
+            throw GradleException("Configure an isolated MySQL test database. Missing: ${missing.joinToString()}")
+        }
+    }
     dependsOn(tasks.shadowJar)
     systemProperty("bloeco.shadow.jar", tasks.shadowJar.get().archiveFile.get().asFile.absolutePath)
 }

@@ -1,6 +1,6 @@
 # Bloeco
 
-> Paper `1.21.11` 的中央经济底座 · Java 21 · MySQL 权威账本 · 内嵌 Native Economy API 1.0
+> Paper `1.21.11` 的中央经济底座 · Java 21 · SQLite 默认存储 · 可选 MySQL · 内嵌 Native Economy API 1.0
 
 Bloeco 是整个 Bloeco 系列插件共用的中央银行与总账系统。它统一管理货币供给、玩家余额、机构账户、国库、税收、手续费、冻结资金和永久账单，所有资金变化都必须落到可审计的复式分录中。设计重点不是“让插件能加钱”，而是让每一笔钱都能回答三个问题：钱从哪里来、现在属于谁、出了问题如何幂等恢复。
 
@@ -28,7 +28,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 
 ## 当前功能
 
-- MySQL 8.4/InnoDB 默认权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
+- 可选 MySQL 8.4/InnoDB 权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
 - 数据库并发保护：多账户资金操作按 `account_id` 固定顺序一次性 `FOR UPDATE`，物化余额每次更新都会递增 `version`，不依赖 Java 全局锁。
 - 正式版本迁移：V001-V008 顺序执行并逐版记录；V008 增加跨服节点、玩家目录和可靠通知，迁移失败时经济中心拒绝启动。
 - Redis 7 默认作为可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
@@ -58,12 +58,12 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 ## 最短部署路径
 
 1. 使用 Java 21 和 Paper `1.21.11`，把 `Bloeco-1.6.0-SNAPSHOT.jar` 放入服务器的 `plugins/` 目录。
-2. 生产环境创建 MySQL 8.4 数据库，并在启动服务器前设置 `BLOECO_MYSQL_PASSWORD`；默认配置已经选择 `storage.type: mysql`。
-3. 按需启动 Redis 7。Redis 断开时只会关闭缓存和事件加速，不会把余额切换到 Redis，也不会静默退回 SQLite。
+2. 单服默认使用 SQLite，首次启动会在插件目录自动创建 `economy.db`，无需安装数据库服务。
+3. 跨服部署请选择 MySQL 8.4 并配置账号，可搭配 Redis 7 加速缓存和事件传输。
 4. 启动 Paper，等待控制台出现 Bloeco ready 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
 5. 业务插件只安装自己的 JAR，并按照[第三方接入规范](docs/third-party-economy-integration.md)通过 `ServicesManager` 发现 API；不要复制 API 类或连接 Bloeco 数据库。
 
-本地开发可以显式改为 `storage.type: sqlite`，但 SQLite 只用于开发、离线测试和导入。生产环境不能依赖“数据库不可用时自动换库”，否则会形成两套互不一致的经济事实。
+已有服务器继续按其配置选择后端。如需更换存储，先迁移并校验账本，再切换配置。
 
 ## 玩家使用
 
@@ -115,13 +115,13 @@ bank:
 
 ## 存储配置
 
-生产默认使用 MySQL，配置位于 `config.yml`：
+默认使用 SQLite。以下示例在 `config.yml` 中显式切换到 MySQL：
 
 ```yaml
 storage:
   type: mysql
   mysql:
-    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8"
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&createDatabaseIfNotExist=true"
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
 redis:
@@ -130,7 +130,9 @@ redis:
   reconnect-interval-seconds: 10
 ```
 
-SQLite 仍保留为开发、离线测试和迁移模式，必须显式设置 `storage.type: sqlite`；MySQL 故障时不会静默回退到 SQLite。完整约束见 [MySQL/Redis V2 存储规范](docs/architecture/storage-v2-mysql-redis.md)。
+`createDatabaseIfNotExist=true` 让驱动在库不存在时创建 JDBC 地址中指定的库。账号仍需事先创建，并有目标库的建表、迁移和读写权限。启动前设置 `BLOECO_MYSQL_PASSWORD`。已有 `config.yml` 会原样保留，升级时可将该参数加到现有 JDBC 地址。使用托管平台预先分配的数据库时，可以把该参数设为 `false`。
+
+SQLite 适用于单服、开发、离线测试和导入。MySQL 故障时不会静默回退到 SQLite。完整约束见 [MySQL/Redis V2 存储规范](docs/architecture/storage-v2-mysql-redis.md)。
 
 启动时会先校验存储类型、连接池、Redis 地址、初始资金、利率和准备金率；配置不安全时不会进入半初始化状态。经济与银行操作分别通过有界异步队列执行，队列关闭或已满时返回“经济账本暂时不可用”，不会把线程池异常传到 Paper 主线程。SQLite 初始化会启用 WAL、外键、忙等待和内存临时表，并自动创建账单、税则、审计及银行流水索引。
 
@@ -157,7 +159,12 @@ API 版本独立于插件版本：当前公开合同为 `1.0.0`，同一主版�
 
 ## 构建
 
-需要 Java 21：
+需要 Java 21。运行测试前，请提前创建独立的 MySQL 8.4 测试数据库，并设置以下环境变量：
+
+- `BLOECO_MYSQL_TEST_URL`，例如 `jdbc:mysql://127.0.0.1:3306/bloeco_test`。
+- `BLOECO_MYSQL_TEST_USER` 和 `BLOECO_MYSQL_TEST_PASSWORD`，用于有权在测试库执行迁移及读写的账号。
+
+`test` 会运行 MySQL 集成和并发压力测试，缺少连接配置时会失败。测试会写入数据并清理部分测试记录，请使用专用测试库。MockBukkit 和 SQLite 兼容性用例继续使用临时 SQLite 文件。仅打包可运行 `shadowJar`。
 
 ```text
 # Linux / macOS

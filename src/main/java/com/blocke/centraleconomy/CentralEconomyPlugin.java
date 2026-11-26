@@ -38,10 +38,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
     public void onEnable() {
         migrateLegacyDataFolder();
         saveDefaultConfig();
-        String storageType = getConfig().getString("storage.type", "mysql");
-        // The Gradle test task sets this explicit local-only override; production always follows config.yml.
-        String testStorage = System.getProperty("bloeco.test.storage");
-        if (testStorage != null && !testStorage.isBlank()) storageType = testStorage;
+        String storageType = getConfig().getString("storage.type", "sqlite");
         Money initialTreasury = configuredPositiveMoney(
                 "bootstrap.treasury-initial-balance", "1000000.00");
         Money initialPlayerBalance = configuredPositiveMoney(
@@ -56,7 +53,9 @@ public class CentralEconomyPlugin extends JavaPlugin {
             getServer().getServicesManager().register(BloecoApi.class, apiProvider, this, ServicePriority.Normal);
             getLogger().info("Bloeco ecosystem API is ready (API " + apiProvider.version() + ").");
         });
-        connectRedisIfEnabled(storageType);
+        if ("mysql".equalsIgnoreCase(storageType)) {
+            connectRedisIfEnabled();
+        }
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
         PayCommand pay = createPayCommand(storageType);
@@ -176,7 +175,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
         return getConfig().getString(valuePath, "");
     }
 
-    private void connectRedisIfEnabled(String storageType) {
+    private void connectRedisIfEnabled() {
         if (!getConfig().getBoolean("redis.enabled", true)) return;
         try {
             redisBridge = RedisEconomyBridge.connect(
@@ -190,10 +189,8 @@ public class CentralEconomyPlugin extends JavaPlugin {
             } else {
                 getLogger().warning("Redis unavailable; Bloeco will reconnect automatically while MySQL remains available.");
             }
-            if ("mysql".equalsIgnoreCase(storageType)) {
-                outboxPublisher = runtime.createOutboxPublisher(
-                        redisBridge, Duration.ofSeconds(2), getLogger()::warning);
-            }
+            outboxPublisher = runtime.createOutboxPublisher(
+                    redisBridge, Duration.ofSeconds(2), getLogger()::warning);
         } catch (RuntimeException exception) {
             getLogger().warning("Redis unavailable; continuing with MySQL authority only.");
         }
@@ -230,7 +227,6 @@ public class CentralEconomyPlugin extends JavaPlugin {
         }
     }
 
-    /** Keeps upgrades safe when a server previously ran the plugin under its old public name. */
     private void migrateLegacyDataFolder() {
         File target = getDataFolder();
         if (target.exists()) {

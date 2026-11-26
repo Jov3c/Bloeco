@@ -9,10 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StorageConfigTest {
     @Test
-    void productionDefaultsUseMysqlAuthorityAndRedisAccelerator() {
+    void newInstallsDefaultToSqliteAndMysqlSupportsDatabaseCreation() {
         try (InputStream input = StorageConfigTest.class.getResourceAsStream("/config.yml")) {
             String config = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-            assertTrue(config.contains("  type: mysql"));
+            assertTrue(config.contains("  type: sqlite"));
+            assertTrue(config.lines().anyMatch(line -> line.stripLeading().startsWith("jdbc-url:")
+                    && line.contains("createDatabaseIfNotExist=true")));
             assertTrue(config.contains("  enabled: true"));
         } catch (Exception exception) {
             throw new AssertionError("default config could not be read", exception);

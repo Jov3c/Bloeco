@@ -2,7 +2,6 @@ package com.blocke.centraleconomy.paper;
 
 import org.bukkit.command.CommandSender;
 
-/** Central role check delegated to the server's permission system. */
 public final class RoleAccess {
     public static final String OPERATOR = "bloeco.role.operator";
     public static final String TREASURER = "bloeco.role.treasurer";

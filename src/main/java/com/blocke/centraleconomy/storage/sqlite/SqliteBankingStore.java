@@ -25,7 +25,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
 
-/** SQLite-compatible banking backend used for development, imports, and tests. */
 public class SqliteBankingStore implements BankingStore {
     private static final String BANK_ID = "bloeco.bank";
     private static final String CLIENT_ID = "bloeco-bank";

@@ -3,7 +3,6 @@ package com.blocke.centraleconomy.config;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Validates startup settings before any database or Paper service is created. */
 public final class ConfigurationValidator {
     private ConfigurationValidator() {
     }
@@ -26,7 +25,7 @@ public final class ConfigurationValidator {
                 errors.add("MySQL 连接池大小必须在 2 到 128 之间。");
             }
         }
-        if (config.redisEnabled()) {
+        if (storage.equals("mysql") && config.redisEnabled()) {
             if (blank(config.redisUri()) || (!config.redisUri().startsWith("redis://")
                     && !config.redisUri().startsWith("rediss://"))) {
                 errors.add("Redis 地址必须以 redis:// 或 rediss:// 开头。");

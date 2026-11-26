@@ -62,17 +62,17 @@ Runtime 只创建一个 `BloecoDataSource`。Ledger、Banking 与 Outbox 共享�
 - Redis 连接失败进入 `DEGRADED`，后台按配置的 5–30 秒间隔进入 `RECONNECTING` 并探测；成功后回到 `AVAILABLE`。发布器随后自动从 `outbox_events` 未发布位置继续，无需重启插件。
 - Redis bridge 记录 `redis_available`、`failure_count`、`last_failure_time`、`last_recovery_time` 和 `reconnect_attempts`；这类异常不会向玩家转账或银行事务抛出，也不会标记 outbox 事件为已发布。后台发布失败日志限频，避免 Redis 故障时刷屏。
 - MySQL 连接池设置 5 秒获取超时、2 秒验证超时、30 分钟最大生命周期和 2 分钟保活；SQLite 使用 WAL、`foreign_keys=ON`、5 秒 `busy_timeout`、`synchronous=FULL` 与 `temp_store=MEMORY`。
-- MySQL 使用不可变 V001-V008 迁移链：V006 增加余额版本列，V007 增加冻结余额、机构能力、原生结算和预授权结构，V008 增加跨服节点、玩家目录和可靠通知；每个成功版本单独写入 `schema_history`，历史断档或迁移失败会阻止启动。SQLite schema 6 继续用于开发/导入模式。
+- MySQL 使用不可变 V001-V008 迁移链：V006 增加余额版本列，V007 增加冻结余额、机构能力、原生结算和预授权结构，V008 增加跨服节点、玩家目录和可靠通知；每个成功版本单独写入 `schema_history`，历史断档或迁移失败会阻止启动。SQLite schema 6 用于单服、开发和导入。
 
 ## 6. 配置基线
 
-生产默认：
+显式启用 MySQL 的配置示例：
 
 ```yaml
 storage:
   type: mysql
   mysql:
-    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    jdbc-url: jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&createDatabaseIfNotExist=true
     username: bloeco
     password-env: BLOECO_MYSQL_PASSWORD
     maximum-pool-size: 16
@@ -91,7 +91,7 @@ bank:
   loan-term-days: 7
 ```
 
-SQLite 仅用于开发、离线测试和迁移工具，必须显式设置 `storage.type: sqlite`。生产环境禁止把 SQLite 当作 MySQL 故障转移目标。
+SQLite 是默认单服存储，也适用于开发、离线测试和导入。生产环境禁止把 SQLite 当作 MySQL 故障转移目标。
 
 配置校验会在创建数据库连接前拒绝未知存储类型、非法 JDBC/Redis 地址、连接池越界、非法 Redis TTL/重连间隔、非法贷款期限/完整性检查间隔、非正初始资金、非法贷款上限和超出 0–10000 的基点。Redis 可以通过 `redis.enabled: false` 关闭；关闭后不影响 MySQL 核心账本。
 

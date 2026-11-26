@@ -15,7 +15,7 @@
 | 服务器节点租约 | Redis TTL + MySQL 注册记录 | 实时租约与发现 |
 | 跨服通知、缓存失效 | MySQL Outbox → Redis Stream | 至少一次投递，消费端幂等 |
 
-SQLite 仍是单服开发/导入模式；使用 SQLite 的服务器不参与跨服集群。所有跨服服务器必须使用同一个 MySQL 数据库、同一个 Redis 集群、同一个 `cluster-id`，并配置唯一的 `server-id`。
+SQLite 是默认单服存储。跨服集群需要显式启用 MySQL。所有跨服服务器必须使用同一个 MySQL 数据库、同一个 Redis 集群、同一个 `cluster-id`，并配置唯一的 `server-id`。
 
 ## 2. 事件拓扑
 

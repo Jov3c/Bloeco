@@ -21,10 +21,11 @@ bank:
   loan-term-days: 7
 
 storage:
-  # Production authority. Use sqlite only for local development/imports.
-  type: mysql
+  # SQLite is the default for single servers. Cross-server deployments require MySQL.
+  type: sqlite
   mysql:
-    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8"
+    # Creates the named database when missing if this MySQL user has CREATE permission on it.
+    jdbc-url: "jdbc:mysql://127.0.0.1:3306/bloeco?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&createDatabaseIfNotExist=true"
     username: "bloeco"
     # Prefer an environment variable over putting credentials in this file.
     password-env: "BLOECO_MYSQL_PASSWORD"

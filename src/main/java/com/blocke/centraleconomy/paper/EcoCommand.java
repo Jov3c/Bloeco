@@ -7,7 +7,6 @@ import org.bukkit.entity.Player;
 
 import java.util.Objects;
 
-/** Opens the GUI-only Bloeco economy centre. */
 public final class EcoCommand implements CommandExecutor {
     private final BloecoMenu menu;
 

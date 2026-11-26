@@ -36,6 +36,7 @@ class PluginBootstrapTest {
         assertFalse(plugin.getDataFolder().toPath().resolve("procurement.yml").toFile().exists());
         assertFalse(plugin.getDataFolder().toPath().resolve("market.yml").toFile().exists());
         assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        assertTrue(plugin.getDataFolder().toPath().resolve("economy.db").toFile().isFile());
         assertEquals("1000000.00", plugin.getConfig().getString("bootstrap.treasury-initial-balance"));
         assertEquals("100.00", plugin.getConfig().getString("bootstrap.player-initial-balance"));
         assertEquals(100_000_000L, plugin.runtime().facade().balance(AccountId.treasury())

@@ -11,7 +11,6 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-/** MySQL reservation state persistence. */
 public final class ReservationRepository {
     public Optional<ReservationRecord> find(Connection connection, UUID id, boolean lock) throws SQLException {
         return query(connection, "SELECT * FROM ecosystem_reservations WHERE reservation_id=?"+

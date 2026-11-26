@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-/** MySQL settlement receipt persistence. */
 public final class SettlementRepository {
     public Optional<SettlementRecord> findByKey(Connection connection, String clientId, String key)
             throws SQLException {
