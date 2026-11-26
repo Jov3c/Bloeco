@@ -8,12 +8,14 @@ import com.blocke.centraleconomy.domain.money.Money;
 import java.sql.DriverManager;
 import java.time.Clock;
 import java.util.UUID;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("mysql-integration")
 class MySqlLedgerStoreIntegrationTest {
     private static final UUID TEST_PLAYER = UUID.fromString("00000000-0000-0000-0000-000000001201");
 

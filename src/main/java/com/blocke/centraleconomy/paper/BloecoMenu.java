@@ -31,9 +31,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.time.ZoneId;
 
-/** GUI-first access to balances, player clearing, fiscal policy, and monetary controls. */
 public final class BloecoMenu implements Listener {
     private static final int SIZE = 27;
     private static final List<Money> AMOUNTS = List.of(
@@ -113,23 +114,31 @@ public final class BloecoMenu implements Listener {
     private void openAdministration(Player player) {
         AdminHolder holder = new AdminHolder(this);
         Inventory inventory = inventory(holder, "Bloeco 中央银行");
-        if (roles.allows(player, RoleAccess.TAX)) {
-            inventory.setItem(10, item(Material.BOOK, "税收与手续费", List.of("版本化财政规则")));
-        }
-        if (roles.allows(player, RoleAccess.MONETARY)) {
-            inventory.setItem(12, item(Material.EMERALD_BLOCK, "申请发行", List.of("仅创建申请，不会立即增发")));
-            inventory.setItem(14, item(Material.COAL_BLOCK, "回收货币", List.of("从国库永久退出流通")));
-        }
-        if (roles.allows(player, RoleAccess.AUDITOR) || roles.allows(player, RoleAccess.OPERATOR)) {
-            inventory.setItem(16, item(Material.COMPARATOR, "校验总账", List.of("重算分录与账户余额")));
-            inventory.setItem(18, item(Material.MAP, "经济总览", List.of("货币供给、流通、国库与税费")));
-        }
-        if (banking != null && (roles.allows(player, RoleAccess.BANKER)
-                || roles.allows(player, RoleAccess.OPERATOR))) {
-            inventory.setItem(20, item(Material.IRON_BLOCK, "银行管理", List.of("利率、准备金与放贷开关")));
-        }
+        Predicate<Player> monetary = viewer -> roles.allows(viewer, RoleAccess.MONETARY);
+        Predicate<Player> audit = viewer -> roles.allows(viewer, RoleAccess.AUDITOR)
+                || roles.allows(viewer, RoleAccess.OPERATOR);
+        addAdminButton(player, holder, 10, item(Material.BOOK, "税收与手续费", List.of("版本化财政规则")),
+                viewer -> roles.allows(viewer, RoleAccess.TAX), this::openTaxes);
+        addAdminButton(player, holder, 12, item(Material.EMERALD_BLOCK, "申请发行", List.of("仅创建申请，不会立即增发")),
+                monetary, viewer -> openAmountSelection(viewer, AdminAction.REQUEST_ISSUE));
+        addAdminButton(player, holder, 14, item(Material.COAL_BLOCK, "回收货币", List.of("从国库永久退出流通")),
+                monetary, viewer -> openAmountSelection(viewer, AdminAction.RETIRE));
+        addAdminButton(player, holder, 16, item(Material.COMPARATOR, "校验总账", List.of("重算分录与账户余额")),
+                audit, this::verify);
+        addAdminButton(player, holder, 18, item(Material.MAP, "经济总览", List.of("货币供给、流通、国库与税费")),
+                audit, this::openOverview);
+        addAdminButton(player, holder, 20, item(Material.IRON_BLOCK, "银行管理", List.of("利率、准备金与放贷开关")),
+                viewer -> banking != null && (roles.allows(viewer, RoleAccess.BANKER)
+                        || roles.allows(viewer, RoleAccess.OPERATOR)), this::openBankAdministration);
         addNavigation(inventory);
         player.openInventory(inventory);
+    }
+
+    private static void addAdminButton(Player player, AdminHolder holder, int slot, ItemStack icon,
+                                       Predicate<Player> allowed, Consumer<Player> action) {
+        if (!allowed.test(player)) return;
+        holder.buttons.put(slot, new AdminButton(allowed, action));
+        holder.getInventory().setItem(slot, icon);
     }
 
     private void openTaxes(Player player) {
@@ -176,18 +185,9 @@ public final class BloecoMenu implements Listener {
         } else if (holder instanceof PaymentHolder payment) {
             if (slot == 16) beginAmountInput(player, AmountInput.payment(payment.recipientId));
             else settlePayment(player, payment, slot);
-        } else if (holder instanceof AdminHolder) {
-            if (slot == 10 && roles.allows(player, RoleAccess.TAX)) openTaxes(player);
-            else if (slot == 12 && roles.allows(player, RoleAccess.MONETARY))
-                openAmountSelection(player, AdminAction.REQUEST_ISSUE);
-            else if (slot == 14 && roles.allows(player, RoleAccess.MONETARY))
-                openAmountSelection(player, AdminAction.RETIRE);
-            else if (slot == 16 && (roles.allows(player, RoleAccess.AUDITOR)
-                    || roles.allows(player, RoleAccess.OPERATOR))) verify(player);
-            else if (slot == 18 && (roles.allows(player, RoleAccess.AUDITOR)
-                    || roles.allows(player, RoleAccess.OPERATOR))) openOverview(player);
-            else if (slot == 20 && banking != null && (roles.allows(player, RoleAccess.BANKER)
-                    || roles.allows(player, RoleAccess.OPERATOR))) openBankAdministration(player);
+        } else if (holder instanceof AdminHolder admin) {
+            AdminButton button = admin.buttons.get(slot);
+            if (button != null && button.allowed().test(player)) button.action().accept(player);
         } else if (holder instanceof AmountHolder amounts && roles.allows(player, RoleAccess.MONETARY)) {
             Money amount = amounts.amounts.get(slot);
             if (amount != null) openConfirmation(player, amounts.action, amount);
@@ -689,15 +689,10 @@ public final class BloecoMenu implements Listener {
         if (holder instanceof PaymentHolder) openRecipients(player);
         else if (holder instanceof ConfirmHolder confirmation) {
             openAmountSelection(player, confirmation.action);
-        } else if (holder instanceof BankAmountHolder) {
+        } else if (holder instanceof BankAmountHolder || holder instanceof BankDetailsHolder) {
             openBank(player);
-        } else if (holder instanceof BankDetailsHolder) {
-            openBank(player);
-        } else if (holder instanceof BankHolder) {
-            open(player);
-        } else if (holder instanceof BankAdminHolder) {
-            openAdministration(player);
-        } else if (holder instanceof TaxHolder || holder instanceof AmountHolder || holder instanceof OverviewHolder) {
+        } else if (holder instanceof BankAdminHolder || holder instanceof TaxHolder
+                || holder instanceof AmountHolder || holder instanceof OverviewHolder) {
             openAdministration(player);
         } else {
             open(player);
@@ -737,7 +732,12 @@ public final class BloecoMenu implements Listener {
         @Override public Inventory getInventory() { return inventory; }
     }
     private static final class HubHolder extends Holder { private HubHolder(BloecoMenu menu) { super(menu); } }
-    private static final class AdminHolder extends Holder { private AdminHolder(BloecoMenu menu) { super(menu); } }
+    private record AdminButton(Predicate<Player> allowed, Consumer<Player> action) {}
+    private static final class AdminHolder extends Holder {
+        private final Map<Integer, AdminButton> buttons = new LinkedHashMap<>();
+
+        private AdminHolder(BloecoMenu menu) { super(menu); }
+    }
     private static final class JournalHolder extends Holder { private JournalHolder(BloecoMenu menu) { super(menu); } }
     private static final class OverviewHolder extends Holder { private OverviewHolder(BloecoMenu menu) { super(menu); } }
     private static final class BankHolder extends Holder {

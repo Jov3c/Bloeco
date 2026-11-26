@@ -1,5 +1,7 @@
 package com.blocke.centraleconomy.config;
 
+import java.util.Locale;
+
 public record ConfigurationSnapshot(
         String storageType,
         String mysqlJdbcUrl,
@@ -21,4 +23,7 @@ public record ConfigurationSnapshot(
         int loanTermDays,
         long integrityIntervalMinutes,
         long redisReconnectSeconds) {
+    public ConfigurationSnapshot {
+        storageType = storageType == null ? "" : storageType.strip().toLowerCase(Locale.ROOT);
+    }
 }

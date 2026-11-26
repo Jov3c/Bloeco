@@ -5,12 +5,14 @@ import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.domain.money.Money;
 import java.time.Clock;
 import java.util.UUID;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("mysql-integration")
 class MySqlBankingStoreIntegrationTest {
     @Test
     @EnabledIfEnvironmentVariable(named = "BLOECO_MYSQL_TEST_URL", matches = ".+")

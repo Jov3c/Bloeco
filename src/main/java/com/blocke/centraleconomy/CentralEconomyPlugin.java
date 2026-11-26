@@ -38,34 +38,31 @@ public class CentralEconomyPlugin extends JavaPlugin {
     public void onEnable() {
         migrateLegacyDataFolder();
         saveDefaultConfig();
-        String storageType = getConfig().getString("storage.type", "sqlite");
         Money initialTreasury = configuredPositiveMoney(
                 "bootstrap.treasury-initial-balance", "1000000.00");
         Money initialPlayerBalance = configuredPositiveMoney(
                 "bootstrap.player-initial-balance", "100.00");
         Money bankCapital = configuredPositiveMoney("bank.initial-capital", "250000.00");
         BankingPolicy bankPolicy = configuredBankPolicy();
-        validateStartupConfiguration(storageType, initialTreasury, initialPlayerBalance, bankCapital, bankPolicy);
-        runtime = createRuntime(storageType, initialTreasury, bankCapital, bankPolicy);
+        ConfigurationSnapshot config = validatedConfiguration(initialTreasury, initialPlayerBalance, bankCapital, bankPolicy);
+        ClusterSettings cluster = configuredCluster(config);
+        runtime = createRuntime(config, initialTreasury, bankCapital, bankPolicy, cluster != null);
         runtime.readyStage().thenAccept(result -> {
             if (!result.isSuccess() || !isEnabled() || apiProvider != null) return;
             apiProvider = new BloecoApiProvider(runtime.institutions());
             getServer().getServicesManager().register(BloecoApi.class, apiProvider, this, ServicePriority.Normal);
             getLogger().info("Bloeco ecosystem API is ready (API " + apiProvider.version() + ").");
         });
-        if ("mysql".equalsIgnoreCase(storageType)) {
-            connectRedisIfEnabled();
-        }
+        connectRedisIfEnabled(config);
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
-        PayCommand pay = createPayCommand(storageType);
+        PayCommand pay = createPayCommand(cluster);
         getCommand("pay").setExecutor(pay);
         getCommand("pay").setTabCompleter(pay);
         getCommand("eco").setExecutor(new EcoCommand(menu));
         getServer().getPluginManager().registerEvents(
                 new PlayerStarterFundsListener(this, runtime.facade(), initialPlayerBalance), this);
-        long minutes = Math.max(1L, getConfig().getLong("integrity.check-interval-minutes", 15L));
-        long ticks = Math.multiplyExact(minutes, 1_200L);
+        long ticks = Math.multiplyExact(config.integrityIntervalMinutes(), 1_200L);
         getServer().getScheduler().runTaskTimer(this, () -> runtime.verifyNow().thenAccept(result -> {
             if (!result.isSuccess() || !result.value().valid()) {
                 getLogger().severe("Central ledger integrity check failed; Bloeco is now read-only.");
@@ -101,29 +98,19 @@ public class CentralEconomyPlugin extends JavaPlugin {
         return runtime;
     }
 
-    private BloecoRuntime createRuntime(String storageType, Money initialTreasury,
-                                        Money bankCapital, BankingPolicy bankPolicy) {
-        if ("sqlite".equalsIgnoreCase(storageType)) {
+    private BloecoRuntime createRuntime(ConfigurationSnapshot config, Money initialTreasury,
+                                        Money bankCapital, BankingPolicy bankPolicy, boolean clustered) {
+        if ("sqlite".equals(config.storageType())) {
             return BloecoRuntime.sqlite(getDataFolder().toPath().resolve(
                     getConfig().getString("storage.sqlite.file", "economy.db")),
                     initialTreasury, bankCapital, bankPolicy,
                     Math.max(8, getConfig().getInt("ecosystem-api.queue-capacity", 256)));
         }
-        if (!"mysql".equalsIgnoreCase(storageType)) {
-            throw new IllegalArgumentException("storage.type must be mysql or sqlite");
-        }
-        String jdbcUrl = getConfig().getString("storage.mysql.jdbc-url");
-        String username = getConfig().getString("storage.mysql.username");
         String password = resolveSecret("storage.mysql.password", "storage.mysql.password-env");
-        int poolSize = Math.max(2, getConfig().getInt("storage.mysql.maximum-pool-size", 16));
-        if (jdbcUrl == null || jdbcUrl.isBlank() || username == null || username.isBlank()) {
-            throw new IllegalArgumentException("storage.mysql.jdbc-url and username are required");
-        }
         int workers = Math.max(2, getConfig().getInt("ecosystem-api.mysql-workers", 4));
         int queue = Math.max(8, getConfig().getInt("ecosystem-api.queue-capacity", 256));
-        return BloecoRuntime.mysql(jdbcUrl, username, password, poolSize,
-                initialTreasury, bankCapital, bankPolicy, workers, queue,
-                getConfig().getBoolean("cluster.enabled", false));
+        return BloecoRuntime.mysql(config.mysqlJdbcUrl(), config.mysqlUsername(), password, config.mysqlPoolSize(),
+                initialTreasury, bankCapital, bankPolicy, workers, queue, clustered);
     }
 
     private BankingPolicy configuredBankPolicy() {
@@ -136,11 +123,11 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 Math.max(1, getConfig().getInt("bank.loan-term-days", 7)));
     }
 
-    private void validateStartupConfiguration(String storageType, Money treasury,
+    private ConfigurationSnapshot validatedConfiguration(Money treasury,
                                               Money playerBalance, Money bankCapital,
                                               BankingPolicy bankPolicy) {
         ConfigurationSnapshot snapshot = new ConfigurationSnapshot(
-                storageType,
+                getConfig().getString("storage.type", "mysql"),
                 getConfig().getString("storage.mysql.jdbc-url", ""),
                 getConfig().getString("storage.mysql.username", ""),
                 getConfig().getBoolean("redis.enabled", true),
@@ -158,6 +145,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
         if (!errors.isEmpty()) {
             throw new IllegalArgumentException("配置校验失败：" + String.join("；", errors));
         }
+        return snapshot;
     }
 
     private int configuredBasisPoints(String path, int defaultValue) {
@@ -175,15 +163,14 @@ public class CentralEconomyPlugin extends JavaPlugin {
         return getConfig().getString(valuePath, "");
     }
 
-    private void connectRedisIfEnabled() {
-        if (!getConfig().getBoolean("redis.enabled", true)) return;
+    private void connectRedisIfEnabled(ConfigurationSnapshot config) {
+        if (!"mysql".equals(config.storageType()) || !config.redisEnabled()) return;
         try {
             redisBridge = RedisEconomyBridge.connect(
-                    getConfig().getString("redis.uri", "redis://127.0.0.1:6379/0"),
+                    config.redisUri(),
                     getConfig().getString("redis.key-prefix", "bloeco:v2:"),
                     getConfig().getString("redis.stream", "bloeco:v2:ledger-events"),
-                    getConfig().getLong("redis.cache-ttl-seconds", 60L),
-                    getConfig().getLong("redis.reconnect-interval-seconds", 10L));
+                    config.redisTtlSeconds(), config.redisReconnectSeconds());
             if (redisBridge.isAvailable()) {
                 getLogger().info("Redis accelerator connected; MySQL remains the ledger authority.");
             } else {
@@ -196,19 +183,22 @@ public class CentralEconomyPlugin extends JavaPlugin {
         }
     }
 
-    private PayCommand createPayCommand(String storageType) {
-        if (!getConfig().getBoolean("cluster.enabled", false)) {
-            return new PayCommand(this, runtime.facade());
-        }
-        if (!"mysql".equalsIgnoreCase(storageType) || redisBridge == null || runtime.clusterDirectory() == null) {
+    private ClusterSettings configuredCluster(ConfigurationSnapshot config) {
+        if (!getConfig().getBoolean("cluster.enabled", false)) return null;
+        if (!"mysql".equals(config.storageType()) || !config.redisEnabled()) {
             throw new IllegalArgumentException("cluster.enabled requires MySQL storage and Redis");
         }
-        ClusterSettings settings = new ClusterSettings(true,
+        return new ClusterSettings(true,
                 getConfig().getString("cluster.cluster-id", "production"),
                 getConfig().getString("cluster.server-id", "server-01"),
                 Duration.ofSeconds(getConfig().getLong("cluster.heartbeat-seconds", 10L)),
                 Duration.ofSeconds(getConfig().getLong("cluster.lease-seconds", 30L)),
                 getConfig().getString("cluster.consumer-group-prefix", "bloeco:v2:cluster:"));
+    }
+
+    private PayCommand createPayCommand(ClusterSettings settings) {
+        if (settings == null) return new PayCommand(this, runtime.facade());
+        if (redisBridge == null) throw new IllegalStateException("Could not initialize Redis for cross-server mode");
         RedisClusterCoordinator coordinator = new RedisClusterCoordinator(redisBridge, settings, Clock.systemUTC());
         clusterRuntime = new PaperClusterRuntime(this, settings, runtime.clusterDirectory(), coordinator);
         getLogger().info("Cross-server economy synchronization enabled as " + settings.serverId() + ".");

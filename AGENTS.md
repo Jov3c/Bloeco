@@ -92,6 +92,15 @@ Every external settlement must separate these values:
 
 Bloeco stores `displayMemo` as an immutable snapshot and does not translate arbitrary third-party text. Preserve proper names when needed, but write the action in Chinese: `在 Bloeco 商店购买 16 个钻石`, `卖出 10 股矿业指数`, or `完成“初来乍到”任务奖励`. Never place UUIDs, stack traces, secrets, formatting control codes, or raw JSON in `displayMemo`. Built-in Bloeco journal memos belong in `application/JournalMemos`; add Chinese copy and regression tests there instead of embedding English sentences in command or GUI adapters.
 
+## Maintainable changes
+
+- Keep each change focused and reviewable. Use the existing domain types, services, and repositories where their contracts fit. Add abstractions only when they simplify a concrete dependency or shared rule.
+- Use domain names and straightforward control flow. Keep transaction ownership, thread boundaries, and resource lifetimes visible in the code. Comments should explain invariants, compatibility constraints, or why a surprising choice is necessary. Remove comments that repeat the code or describe obsolete behavior.
+- Review changes through the normal plugin entry points and with existing data and configurations in mind. For affected background work, check startup, shutdown, timeouts, retries, and queue rejection. For affected writes, verify atomicity, idempotency, and concurrent behavior.
+- Make operational failures diagnosable. Include the failed operation and relevant context in logs, preserve the underlying cause where safe, and keep credentials and private business data out of logs and player messages.
+- Write concise English commit subjects that describe the change in the imperative mood.
+- Commit changes on a working branch and open a pull request targeting `main`. Do not push changes directly to `main`. Merge after review and required checks pass.
+
 ## Development and release checks
 
 Run:
@@ -100,7 +109,7 @@ Run:
 ./gradlew clean test shadowJar
 ```
 
-On Windows use `gradlew.bat`. Add a failing regression test before production behavior changes, then run the focused test and the full suite. Inspect the shaded JAR's `plugin.yml` and `config.yml` before release. MySQL changes also require the gated integration suite and concurrency stress test against an isolated MySQL database.
+On Windows use `gradlew.bat`. Add a failing regression test before production behavior changes, then run the focused test and the full suite. Inspect the shaded JAR's `plugin.yml` and `config.yml` before release. MySQL changes also require `mysqlTest` against an isolated MySQL database. This task runs the integration and concurrency stress tests.
 
 Keep GitHub source clean: commit source, tests, Gradle files, README, and product/technical documentation only. Never commit build output, Paper runtime data, worlds, logs, databases, caches, IDE state, local plans, credentials, or generated QA artifacts. Release JARs belong in GitHub Releases, not in the source tree.
 

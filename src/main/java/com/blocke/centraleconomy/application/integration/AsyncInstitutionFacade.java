@@ -79,13 +79,30 @@ public final class AsyncInstitutionFacade implements AutoCloseable {
                 pluginName,mainClass,version,descriptor);return new Client(record);});
     }
 
-    private <T> CompletionStage<EconomyResult<T>> submit(boolean write,Function<Services,T> work){
-        if(!accepting.get())return CompletableFuture.completedFuture(unavailable());
-        CompletableFuture<EconomyResult<T>> future=new CompletableFuture<>();
-        try{executor.execute(()->{try{if(!ready.join()||services==null){future.complete(unavailable());return;}
-            if(write&&readOnly.getAsBoolean()){future.complete(EconomyResult.failure(EconomyError.INTEGRITY_READ_ONLY,
-                    "Bloeco 当前处于只读保护状态。"));return;}future.complete(EconomyResult.success(work.apply(services)));}
-            catch(Throwable failure){future.complete(failure(failure));}});}catch(RejectedExecutionException e){future.complete(unavailable());}
+    private <T> CompletionStage<EconomyResult<T>> submit(boolean write, Function<Services, T> work) {
+        if (!accepting.get()) return CompletableFuture.completedFuture(unavailable());
+
+        CompletableFuture<EconomyResult<T>> future = new CompletableFuture<>();
+        try {
+            executor.execute(() -> {
+                try {
+                    if (!ready.join() || services == null) {
+                        future.complete(unavailable());
+                        return;
+                    }
+                    if (write && readOnly.getAsBoolean()) {
+                        future.complete(EconomyResult.failure(EconomyError.INTEGRITY_READ_ONLY,
+                                "Bloeco 当前处于只读保护状态。"));
+                        return;
+                    }
+                    future.complete(EconomyResult.success(work.apply(services)));
+                } catch (Throwable failure) {
+                    future.complete(failure(failure));
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            future.complete(unavailable());
+        }
         return future;
     }
 
@@ -153,9 +170,20 @@ public final class AsyncInstitutionFacade implements AutoCloseable {
             default->EconomyError.INVALID_REQUEST;},e.getMessage());
         if(value instanceof IllegalArgumentException)return EconomyResult.failure(EconomyError.INVALID_REQUEST,value.getMessage());
         return EconomyResult.failure(EconomyError.INTERNAL_ERROR,"Bloeco 未能完成该请求。");}
-    @Override public void close(){if(!accepting.compareAndSet(true,false))return;executor.shutdown();
-        try{if(!executor.awaitTermination(30,TimeUnit.SECONDS))executor.shutdownNow();}catch(InterruptedException e){
-            Thread.currentThread().interrupt();executor.shutdownNow();}Services current=services;if(current!=null)current.close();}
+    @Override
+    public void close() {
+        if (!accepting.compareAndSet(true, false)) return;
+
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) executor.shutdownNow();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            executor.shutdownNow();
+        }
+        Services current = services;
+        if (current != null) current.close();
+    }
 
     public record Services(EcosystemStore store,LedgerStore ledger,TaxRuleService taxes,Clock clock) implements AutoCloseable{
         @Override public void close(){store.close();ledger.close();}}
