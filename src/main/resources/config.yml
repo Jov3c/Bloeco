@@ -36,7 +36,7 @@ storage:
 
 # Redis is a rebuildable cache and event transport. It is never the source of truth.
 redis:
-  enabled: true
+  enabled: false
   uri: "redis://127.0.0.1:6379/0"
   key-prefix: "bloeco:v2:"
   stream: "bloeco:v2:ledger-events"

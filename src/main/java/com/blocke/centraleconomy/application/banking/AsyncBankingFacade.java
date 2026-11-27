@@ -145,21 +145,21 @@ public final class AsyncBankingFacade implements AutoCloseable {
                     result.complete(unavailable());
                     return;
                 }
+                Result<T> outcome;
                 try {
                     synchronized (writeGuard) {
-                        if (writes && readOnly.getAsBoolean()) {
-                            result.complete(Result.failure(ErrorCode.INTEGRITY_FAILURE, "银行当前处于只读保护状态。"));
-                            return;
-                        }
-                        result.complete(Result.success(operation.apply(current)));
+                        outcome = writes && readOnly.getAsBoolean()
+                                ? Result.failure(ErrorCode.INTEGRITY_FAILURE, "银行当前处于只读保护状态。")
+                                : Result.success(operation.apply(current));
                     }
                 } catch (LedgerException exception) {
-                    result.complete(Result.failure(map(exception.code()), exception.getMessage()));
+                    outcome = Result.failure(map(exception.code()), exception.getMessage());
                 } catch (IllegalArgumentException exception) {
-                    result.complete(Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage()));
+                    outcome = Result.failure(ErrorCode.INVALID_REQUEST, exception.getMessage());
                 } catch (RuntimeException exception) {
-                    result.complete(Result.failure(ErrorCode.INTERNAL_ERROR, "银行操作失败。"));
+                    outcome = Result.failure(ErrorCode.INTERNAL_ERROR, "银行操作失败。");
                 }
+                result.complete(outcome);
             });
         } catch (RejectedExecutionException exception) {
             result.complete(unavailable());

@@ -1,5 +1,6 @@
 package com.blocke.centraleconomy;
 
+import org.bukkit.configuration.ConfigurationSection;
 import com.blocke.centraleconomy.paper.BloecoRuntime;
 import com.blocke.centraleconomy.paper.BloecoMenu;
 import com.blocke.centraleconomy.paper.EcoCommand;
@@ -125,6 +126,11 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 Math.max(1, getConfig().getInt("bank.loan-term-days", 7)));
     }
 
+    static boolean redisEnabled(ConfigurationSection config) {
+        // Older installations enabled Redis when the on-disk setting was absent.
+        return !config.contains("redis.enabled", true) || config.getBoolean("redis.enabled");
+    }
+
     private ConfigurationSnapshot validatedConfiguration(Money treasury,
                                               Money playerBalance, Money bankCapital,
                                               BankingPolicy bankPolicy) {
@@ -132,7 +138,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 getConfig().getString("storage.type", "mysql"),
                 getConfig().getString("storage.mysql.jdbc-url", ""),
                 getConfig().getString("storage.mysql.username", ""),
-                getConfig().getBoolean("redis.enabled", true),
+                redisEnabled(getConfig()),
                 getConfig().getString("redis.uri", ""),
                 getConfig().getInt("storage.mysql.maximum-pool-size", 16),
                 getConfig().getLong("redis.cache-ttl-seconds", 60L),
