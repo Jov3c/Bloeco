@@ -1,10 +1,20 @@
 # Bloeco
 
-> Paper `1.21.11` 的中央经济底座 · Java 21 · SQLite 默认存储 · 可选 MySQL · 内嵌 Native Economy API 1.0
+> Minecraft 服务端经济底座 · SQLite 默认存储 · 可选 MySQL · 内嵌 Native Economy API 1.0
 
 Bloeco 是整个 Bloeco 系列插件共用的中央银行与总账系统。它统一管理货币供给、玩家余额、机构账户、国库、税收、手续费、冻结资金和永久账单，所有资金变化都必须落到可审计的复式分录中。设计重点不是“让插件能加钱”，而是让每一笔钱都能回答三个问题：钱从哪里来、现在属于谁、出了问题如何幂等恢复。
 
 Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物品交付，也不依赖或注册 Vault。后续经济业务插件以 Bloeco 为唯一资金底座，通过内嵌的 Native Economy API 获得自己的机构账本并完成结算；业务插件不能直接修改玩家余额、连接 Bloeco 数据库，或维护第二套可消费货币。
+
+## 平台兼容性
+
+Bloeco 面向 Minecraft 服务端生态，后续会扩展到更多服务端平台和 Minecraft 版本。平台适配负责插件生命周期、命令、界面和服务发现，经济规则和结算合同由核心统一维护。
+
+| 服务端平台 | Minecraft 版本 | Java | 状态 |
+| --- | --- | --- | --- |
+| Paper | `1.21.11` | 21 | 当前构建目标 |
+
+新增平台和版本的支持范围、安装方式及已知限制会写入对应版本的发布说明。
 
 ## 先看结论
 
@@ -24,7 +34,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 - [原生 API 设计](docs/architecture/native-api-design.md)：类似 Vault 的稳定接口，但 API 直接内嵌在 Bloeco JAR 中。
 - [MySQL/Redis 存储规范](docs/architecture/storage-v2-mysql-redis.md)：事务、迁移、Outbox、缓存降级和 Redis 事件语义。
 - [跨服同步规范](docs/architecture/cross-server-sync.md)：节点租约、玩家目录、可靠通知及故障降级语义。
-- [Agent 指南](AGENTS.md)：修改源码、设计资金流或接入新插件时的工程约束。
+- [仓库规范](AGENTS.md)：开发、测试、提交和代码审查的工程约束。
 
 ## 当前功能
 
@@ -55,9 +65,9 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 - 反通胀放贷：贷款只从 `bank:cash` 转给玩家，受准备金率、银行现金、放贷开关和单人贷款上限约束；贷款不会调用货币发行。
 - 银行经营 GUI：具有 `bloeco.role.banker` 权限的管理员可在 `/eco` 中查看资产负债表，并调整存款利率、贷款利率、准备金率、贷款上限和放贷开关。
 
-## 最短部署路径
+## Paper 部署
 
-1. 使用 Java 21 和 Paper `1.21.11`，把 `Bloeco-1.6.0-SNAPSHOT.jar` 放入服务器的 `plugins/` 目录。
+1. 按上方平台兼容性表选择 Paper 和 Java 版本，把对应的 Bloeco 插件 JAR 放入服务器的 `plugins/` 目录。
 2. 单服默认使用 SQLite，首次启动会在插件目录自动创建 `economy.db`，无需安装数据库服务。
 3. 跨服部署请选择 MySQL 8.4 并配置账号，可搭配 Redis 7 加速缓存和事件传输。
 4. 启动 Paper，等待控制台出现 Bloeco ready 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
