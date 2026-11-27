@@ -1,6 +1,7 @@
 package com.blocke.centraleconomy.storage.mysql;
 
 import com.blocke.centraleconomy.application.CentralBankService;
+import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.account.Account;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
@@ -18,6 +19,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@Tag("mysql-integration")
 class MySqlConcurrencyStressTest {
     private static final String CLIENT_ID = "bloeco-stress";
     private static final int WORKERS = 12;
@@ -46,6 +49,7 @@ class MySqlConcurrencyStressTest {
             try (MySqlLedgerStore setup = new MySqlLedgerStore(url, username, password, 2)) {
                 CentralBankService bank = new CentralBankService(setup, Clock.systemUTC());
                 bank.initializeCentralAccounts();
+                bank.bootstrapTreasury(Money.parse("1000000"));
                 treasuryBefore = setup.balance(AccountId.treasury());
                 accounts.forEach(setup::createAccount);
                 List<Posting> funding = new ArrayList<>();

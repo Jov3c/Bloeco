@@ -19,6 +19,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static com.blocke.centraleconomy.storage.RefundAssertions.assertRefundTaxRemainder;
 
 class SqliteEcosystemSettlementTest {
     @TempDir Path temporaryDirectory;
@@ -38,16 +39,18 @@ class SqliteEcosystemSettlementTest {
             try (SqliteEcosystemStore store = new SqliteEcosystemStore(database)) {
                 new InstitutionService(store, clock).registerOrResume("Bloeco-Shop", "test.Shop", "1.0",
                         new InstitutionDescriptor("bloeco.shop", "商店",
-                                Set.of(InstitutionCapability.CHARGE_PLAYER), Set.of("sales")));
-                new InstitutionSettlementService(store, taxes, clock).chargePlayer("bloeco.shop", player,
+                                Set.of(InstitutionCapability.CHARGE_PLAYER, InstitutionCapability.REFUND), Set.of("sales")));
+                var service = new InstitutionSettlementService(store, taxes, clock);
+                var charge = service.chargePlayer("bloeco.shop", player,
                         "sales", Money.ofMinor(1_000), SettlementKind.PURCHASE,
                         new OperationContext("shop.order", "CN-1", "购买一把钻石剑", "cn-1"));
+                assertRefundTaxRemainder(service, charge);
             }
         }
         try (SqliteEcosystemStore store = new SqliteEcosystemStore(database)) {
             SettlementRecord restored = store.findOperation("bloeco.shop", "cn-1").orElseThrow();
             assertEquals("购买一把钻石剑", restored.displayMemo());
-            assertEquals(1, store.recentTransactions("bloeco.shop", "sales", 10).size());
+            assertEquals(4, store.recentTransactions("bloeco.shop", "sales", 10).size());
         }
     }
 }

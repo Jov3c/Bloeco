@@ -4,6 +4,7 @@ import com.blocke.bloeco.api.SettlementKind;
 import com.blocke.centraleconomy.application.integration.EcosystemStore;
 import com.blocke.centraleconomy.application.integration.InstitutionRecord;
 import com.blocke.centraleconomy.application.integration.ReservationRecord;
+import com.blocke.centraleconomy.application.integration.RefundAmounts;
 import com.blocke.centraleconomy.application.integration.SettlementRecord;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.ledger.JournalEntry;
@@ -19,8 +20,6 @@ import com.blocke.centraleconomy.storage.mysql.repository.ReservationRepository;
 import com.blocke.centraleconomy.storage.mysql.repository.SettlementRepository;
 
 import javax.sql.DataSource;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -104,12 +103,7 @@ public final class MySqlEcosystemStore implements EcosystemStore {
                 throw new LedgerException(LedgerException.Code.UNAUTHORIZED,"original charge is not owned by caller");
             long refundedPrincipal=settlements.refunded(c,original.operationId(),"principal_minor");
             long refundedTax=settlements.refunded(c,original.operationId(),"tax_minor");
-            long principalLeft=Math.subtractExact(original.principal().minor(),refundedPrincipal);
-            long taxLeft=Math.subtractExact(original.tax().minor(),refundedTax);
-            if(command.principal().minor()>principalLeft)throw new LedgerException(
-                    LedgerException.Code.INVALID_AMOUNT,"refund exceeds remaining principal");
-            long tax=command.principal().minor()==principalLeft?taxLeft:Math.min(taxLeft,proportional(
-                    original.tax().minor(),command.principal().minor(),original.principal().minor()));
+            long tax = RefundAmounts.taxFor(original, command.principal(), refundedPrincipal, refundedTax);
             List<Posting> lines=new ArrayList<>();
             lines.add(new Posting(original.institutionAccountId(),-command.principal().minor()));
             add(lines,AccountId.taxRevenue(),-tax);
@@ -186,23 +180,34 @@ public final class MySqlEcosystemStore implements EcosystemStore {
         });
     }
 
-    @Override public ReservationRecord release(ReservationTransition command){
-        open();return transactions.execute(c->{
-            ReservationRecord r=reservations.find(c,command.reservationId(),true).orElseThrow(()->
-                    new LedgerException(LedgerException.Code.INVALID_JOURNAL,"reservation does not exist"));own(command.clientId(),r);
-            String[] prior=releaseIdentity(c,r.reservationId());
-            if(prior[0]!=null){if(!prior[0].equals(command.idempotencyKey())||!prior[1].equals(command.fingerprint()))conflict();return r;}
-            if(r.status()==ReservationRecord.Status.ACTIVE&&!r.expiresAt().isAfter(command.transitionedAt())){
-                AccountId player=AccountId.player(r.playerId());BalanceRepository.StoredAccount locked=lockOne(c,player);
-                balances.updateReserved(c,player,Math.subtractExact(locked.reserved(),r.reservedTotal().minor()));
-                updateReservation(c,r.reservationId(),"EXPIRED",command.transitionedAt(),null,null,null);
-                return reservations.find(c,r.reservationId(),false).orElseThrow();}
-            if(r.status()!=ReservationRecord.Status.ACTIVE)throw new LedgerException(LedgerException.Code.POLICY_REJECTED,
-                    "reservation is no longer active");
-            AccountId player=AccountId.player(r.playerId());BalanceRepository.StoredAccount locked=lockOne(c,player);
-            balances.updateReserved(c,player,Math.subtractExact(locked.reserved(),r.reservedTotal().minor()));
-            updateReservation(c,r.reservationId(),"RELEASED",command.transitionedAt(),null,command.idempotencyKey(),command.fingerprint());
-            return reservations.find(c,r.reservationId(),false).orElseThrow();
+    @Override
+    public ReservationRecord release(ReservationTransition command) {
+        open();
+        return transactions.execute(connection -> {
+            ReservationRecord reservation = reservations.find(connection, command.reservationId(), true)
+                    .orElseThrow(() -> new LedgerException(LedgerException.Code.INVALID_JOURNAL,
+                            "reservation does not exist"));
+            own(command.clientId(), reservation);
+            ReleaseIdentity prior = releaseIdentity(connection, reservation.reservationId());
+            if (prior.key() != null) {
+                if (!prior.key().equals(command.idempotencyKey())
+                        || !prior.fingerprint().equals(command.fingerprint())) conflict();
+                return reservation;
+            }
+            if (reservation.status() != ReservationRecord.Status.ACTIVE) {
+                throw new LedgerException(LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
+            }
+
+            AccountId player = AccountId.player(reservation.playerId());
+            BalanceRepository.StoredAccount locked = lockOne(connection, player);
+            balances.updateReserved(connection, player,
+                    Math.subtractExact(locked.reserved(), reservation.reservedTotal().minor()));
+
+            boolean expired = !reservation.expiresAt().isAfter(command.transitionedAt());
+            updateReservation(connection, reservation.reservationId(), expired ? "EXPIRED" : "RELEASED",
+                    command.transitionedAt(), null, expired ? null : command.idempotencyKey(),
+                    expired ? null : command.fingerprint());
+            return reservations.find(connection, reservation.reservationId(), false).orElseThrow();
         });
     }
 
@@ -262,14 +267,22 @@ public final class MySqlEcosystemStore implements EcosystemStore {
                 WHERE reservation_id=?
                 """)){s.setString(1,status);s.setLong(2,at.toEpochMilli());s.setString(3,capture==null?null:capture.toString());
             s.setString(4,key);s.setString(5,fp);s.setString(6,id.toString());s.executeUpdate();}}
-    private static String[] releaseIdentity(Connection c,UUID id)throws SQLException{try(PreparedStatement s=c.prepareStatement(
-            "SELECT release_idempotency_key,release_fingerprint FROM ecosystem_reservations WHERE reservation_id=?")){
-        s.setString(1,id.toString());try(ResultSet r=s.executeQuery()){r.next();return new String[]{r.getString(1),r.getString(2)};}}}
+    private static ReleaseIdentity releaseIdentity(Connection connection, UUID id) throws SQLException {
+        try (PreparedStatement query = connection.prepareStatement(
+                "SELECT release_idempotency_key,release_fingerprint FROM ecosystem_reservations WHERE reservation_id=?")) {
+            query.setString(1, id.toString());
+            try (ResultSet rows = query.executeQuery()) {
+                rows.next();
+                return new ReleaseIdentity(rows.getString(1), rows.getString(2));
+            }
+        }
+    }
+
+    private record ReleaseIdentity(String key, String fingerprint) {}
+
     private static void own(String client,ReservationRecord r){if(!r.clientId().equals(client))throw new LedgerException(
             LedgerException.Code.UNAUTHORIZED,"reservation is not owned by caller");}
     private static void add(List<Posting> lines,AccountId id,long amount){if(amount!=0)lines.add(new Posting(id,amount));}
-    private static long proportional(long total,long part,long whole){return BigDecimal.valueOf(total).multiply(BigDecimal.valueOf(part))
-            .divide(BigDecimal.valueOf(whole),0, RoundingMode.HALF_UP).longValueExact();}
     private static void matching(SettlementRecord r,String fp){if(!r.fingerprint().equals(fp))conflict();}
     private static void conflict(){throw new LedgerException(LedgerException.Code.IDEMPOTENCY_CONFLICT,
             "idempotency key conflicts with another request");}

@@ -13,6 +13,7 @@ import com.blocke.centraleconomy.domain.ledger.JournalEntry;
 import com.blocke.centraleconomy.domain.ledger.JournalType;
 import com.blocke.centraleconomy.domain.ledger.Posting;
 import com.blocke.centraleconomy.domain.money.Money;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
@@ -23,7 +24,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static com.blocke.centraleconomy.storage.RefundAssertions.assertRefundTaxRemainder;
 
+@Tag("mysql-integration")
 class MySqlEcosystemStoreIntegrationTest {
     @Test
     @EnabledIfEnvironmentVariable(named="BLOECO_MYSQL_TEST_URL",matches=".+")
@@ -42,14 +45,19 @@ class MySqlEcosystemStoreIntegrationTest {
                 bank.grantStarterFunds(player,Money.ofMinor(20_000));
                 TaxRuleService taxes=new TaxRuleService(ledger,clock);taxes.initializeDefaults();
                 new InstitutionService(ecosystem,clock).registerOrResume("Test-Shop-"+run,"test.Shop","1.0",
-                        new InstitutionDescriptor(client,"测试商店",Set.of(InstitutionCapability.CHARGE_PLAYER),
+                        new InstitutionDescriptor(client,"测试商店",Set.of(InstitutionCapability.CHARGE_PLAYER,
+                                InstitutionCapability.REFUND),
                                 Set.of("sales")));
-                var receipt=new InstitutionSettlementService(ecosystem,taxes,clock).chargePlayer(client,player,"sales",
+                var service = new InstitutionSettlementService(ecosystem, taxes, clock);
+                var receipt=service.chargePlayer(client,player,"sales",
                         Money.ofMinor(1_000), SettlementKind.PURCHASE,
                         new OperationContext("test.order",run,"MySQL 购买测试","charge-"+run));
                 assertEquals(50,receipt.tax().minor());
                 assertEquals(18_950,ecosystem.balance(AccountId.player(player)));
                 assertEquals(1_000,ecosystem.balance(AccountId.plugin(client,"sales")));
+                assertRefundTaxRemainder(service, receipt);
+                assertEquals(20_000, ecosystem.balance(AccountId.player(player)));
+                assertEquals(0, ecosystem.balance(AccountId.plugin(client, "sales")));
             }
         }
     }

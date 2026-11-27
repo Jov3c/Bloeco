@@ -3,6 +3,7 @@ package com.blocke.centraleconomy.storage.sqlite;
 import com.blocke.bloeco.api.InstitutionCapability;
 import com.blocke.centraleconomy.application.integration.EcosystemStore;
 import com.blocke.centraleconomy.application.integration.InstitutionRecord;
+import com.blocke.centraleconomy.application.integration.RefundAmounts;
 import com.blocke.centraleconomy.application.integration.SettlementRecord;
 import com.blocke.centraleconomy.application.integration.ReservationRecord;
 import com.blocke.centraleconomy.domain.account.AccountId;
@@ -18,8 +19,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -160,13 +159,7 @@ public final class SqliteEcosystemStore implements EcosystemStore {
                         "original charge is not owned by the caller");
             }
             RefundTotals refunded = refunded(command.originalOperationId());
-            long remainingPrincipal = Math.subtractExact(original.principal().minor(), refunded.principal());
-            long remainingTax = Math.subtractExact(original.tax().minor(), refunded.tax());
-            if (command.principal().minor() > remainingPrincipal) throw new LedgerException(
-                    LedgerException.Code.INVALID_AMOUNT, "refund exceeds the unrefunded principal");
-            long tax = command.principal().minor() == remainingPrincipal ? remainingTax
-                    : proportional(original.tax().minor(), command.principal().minor(), original.principal().minor());
-            tax = Math.min(tax, remainingTax);
+            long tax = RefundAmounts.taxFor(original, command.principal(), refunded.principal(), refunded.tax());
             List<BalanceDelta> deltas = new ArrayList<>();
             deltas.add(new BalanceDelta(original.institutionAccountId(), -command.principal().minor()));
             addIfNonZero(deltas, AccountId.taxRevenue(), -tax);
@@ -802,10 +795,6 @@ public final class SqliteEcosystemStore implements EcosystemStore {
         if (amount != 0) deltas.add(new BalanceDelta(accountId, amount));
     }
 
-    private static long proportional(long total, long part, long whole) {
-        return BigDecimal.valueOf(total).multiply(BigDecimal.valueOf(part))
-                .divide(BigDecimal.valueOf(whole), 0, RoundingMode.HALF_UP).longValueExact();
-    }
 
     private record BalanceDelta(AccountId accountId, long amount) {}
     private record RefundTotals(long principal, long tax) {}

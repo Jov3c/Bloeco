@@ -63,7 +63,7 @@ Bloeco 不包含商店、证券、拍卖、任务、商品定价、库存或物�
 4. 启动 Paper，等待控制台出现 Bloeco ready 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
 5. 业务插件只安装自己的 JAR，并按照[第三方接入规范](docs/third-party-economy-integration.md)通过 `ServicesManager` 发现 API；不要复制 API 类或连接 Bloeco 数据库。
 
-已有服务器继续按其配置选择后端。如需更换存储，先迁移并校验账本，再切换配置。
+已有服务器继续按其配置选择后端。旧配置省略 `storage.type` 时沿用原来的 MySQL 默认值。如需更换存储，先迁移并校验账本，再切换配置。
 
 ## 玩家使用
 
@@ -159,12 +159,12 @@ API 版本独立于插件版本：当前公开合同为 `1.0.0`，同一主版�
 
 ## 构建
 
-需要 Java 21。运行测试前，请提前创建独立的 MySQL 8.4 测试数据库，并设置以下环境变量：
+需要 Java 21。常规测试可以直接运行 `gradlew.bat clean test shadowJar`，无需 MySQL。运行 `mysqlTest` 前，请准备独立的 MySQL 8.4 测试数据库，并设置以下环境变量：
 
 - `BLOECO_MYSQL_TEST_URL`，例如 `jdbc:mysql://127.0.0.1:3306/bloeco_test`。
 - `BLOECO_MYSQL_TEST_USER` 和 `BLOECO_MYSQL_TEST_PASSWORD`，用于有权在测试库执行迁移及读写的账号。
 
-`test` 会运行 MySQL 集成和并发压力测试，缺少连接配置时会失败。测试会写入数据并清理部分测试记录，请使用专用测试库。MockBukkit 和 SQLite 兼容性用例继续使用临时 SQLite 文件。仅打包可运行 `shadowJar`。
+MySQL 集成和并发压力测试只由 `mysqlTest` 执行。即使环境变量已设置，常规 `test` 也不会连接 MySQL。`mysqlTest` 缺少连接配置时会失败，执行时会写入数据并清理部分测试记录，请使用专用测试库。MockBukkit 和 SQLite 兼容性用例使用临时 SQLite 文件。仅打包可运行 `shadowJar`。
 
 ```text
 # Linux / macOS

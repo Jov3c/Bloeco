@@ -39,7 +39,17 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform { excludeTags("mysql-integration") }
+    dependsOn(tasks.shadowJar)
+    systemProperty("bloeco.shadow.jar", tasks.shadowJar.get().archiveFile.get().asFile.absolutePath)
+}
+
+tasks.register<Test>("mysqlTest") {
+    description = "Runs MySQL integration and concurrency tests against an isolated database."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("mysql-integration") }
     environment("BLOECO_MYSQL_STRESS", "true")
     outputs.upToDateWhen { false }
     doFirst {
@@ -49,8 +59,6 @@ tasks.test {
             throw GradleException("Configure an isolated MySQL test database. Missing: ${missing.joinToString()}")
         }
     }
-    dependsOn(tasks.shadowJar)
-    systemProperty("bloeco.shadow.jar", tasks.shadowJar.get().archiveFile.get().asFile.absolutePath)
 }
 
 tasks.jar {

@@ -5,6 +5,7 @@ import org.mockbukkit.mockbukkit.MockBukkit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.bukkit.configuration.file.YamlConfiguration;
 
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -14,6 +15,24 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginBootstrapTest {
+
+    @Test
+    void sqliteStorageAcceptsSurroundingWhitespace() {
+        var config = new YamlConfiguration();
+        config.set("storage.type", " SQLite ");
+        var plugin = MockBukkit.loadWithConfig(CentralEconomyPlugin.class, config);
+        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        assertTrue(plugin.getDataFolder().toPath().resolve("economy.db").toFile().isFile());
+    }
+
+    @Test
+    void existingConfigWithoutStorageTypeStillValidatesMysqlSettings() {
+        var config = new YamlConfiguration();
+        config.set("storage.mysql.jdbc-url", "invalid");
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> MockBukkit.loadWithConfig(CentralEconomyPlugin.class, config));
+        assertTrue(failure.toString().contains("MySQL JDBC"));
+    }
 
     @BeforeEach
     void setUpMockServer() {

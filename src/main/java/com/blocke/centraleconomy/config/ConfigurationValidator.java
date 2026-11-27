@@ -12,7 +12,7 @@ public final class ConfigurationValidator {
         if (config == null) {
             return List.of("配置不能为空。");
         }
-        String storage = config.storageType() == null ? "" : config.storageType().trim().toLowerCase();
+        String storage = config.storageType();
         if (!storage.equals("mysql") && !storage.equals("sqlite")) {
             errors.add("storage.type 必须是 mysql 或 sqlite。");
         }
