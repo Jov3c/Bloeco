@@ -8,6 +8,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Read-only reporting service derived entirely from the authoritative journal. */
 public final class EconomyQueries {
@@ -33,7 +34,12 @@ public final class EconomyQueries {
     }
 
     public List<JournalEntry> recentJournal(AccountId accountId, int limit) {
-        return store.recentEntries(Optional.of(Objects.requireNonNull(accountId, "accountId")), checkedLimit(limit));
+        return journalPage(accountId, limit, null);
+    }
+
+    public List<JournalEntry> journalPage(AccountId accountId, int limit, UUID beforeEntry) {
+        return store.journalPage(Optional.of(Objects.requireNonNull(accountId, "accountId")),
+                checkedLimit(limit), beforeEntry);
     }
 
     public List<JournalEntry> recentJournal(int limit) {

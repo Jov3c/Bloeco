@@ -216,7 +216,7 @@ bank_operations
 
 ## 10. Native API
 
-Bloeco 1.5 已把 Native Economy API 1.0 内嵌在主插件 JAR，并在数据库迁移、完整性校验和运行时就绪后通过 Paper `ServicesManager` 注册 `BloecoApi`。API 与实现不拆成第二个前置；Consumer 以 `compileOnly` 引用 Bloeco JAR，并声明 `depend: [Bloeco]`。
+Native Economy API 1.0 内嵌在主插件 JAR。Bloeco 启用时通过 Paper `ServicesManager` 注册 `BloecoApi`，连接请求在数据库初始化和完整性校验完成后处理。Consumer 以 `compileOnly` 引用 Bloeco JAR，并声明 `depend: [Bloeco]`。
 
 ```text
 BloecoApi

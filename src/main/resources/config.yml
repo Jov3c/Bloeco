@@ -17,7 +17,7 @@ bank:
   loan-rate-bps: 320
   reserve-ratio-bps: 2000
   maximum-loan: "10000.00"
-  lending-enabled: true
+  lending-enabled: false
   loan-term-days: 7
 
 storage:

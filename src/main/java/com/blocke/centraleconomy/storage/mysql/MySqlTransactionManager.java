@@ -16,10 +16,19 @@ public final class MySqlTransactionManager {
     }
 
     public <T> T execute(TransactionWork<T> work) {
+        return execute(work, Connection.TRANSACTION_READ_COMMITTED, false);
+    }
+
+    <T> T readSnapshot(TransactionWork<T> work) {
+        return execute(work, Connection.TRANSACTION_REPEATABLE_READ, true);
+    }
+
+    private <T> T execute(TransactionWork<T> work, int isolation, boolean readOnly) {
         Objects.requireNonNull(work, "work");
         try (Connection connection = dataSource.getConnection()) {
             boolean originalAutoCommit = connection.getAutoCommit();
-            connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+            connection.setTransactionIsolation(isolation);
+            if (readOnly) connection.setReadOnly(true);
             connection.setAutoCommit(false);
             try {
                 T result = work.execute(connection);

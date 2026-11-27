@@ -37,6 +37,7 @@ import java.time.ZoneId;
 
 public final class BloecoMenu implements Listener {
     private static final int SIZE = 27;
+    private static final int JOURNAL_PAGE_SIZE = 21;
     private static final List<Money> AMOUNTS = List.of(
             Money.ofMinor(10_000), Money.ofMinor(100_000), Money.ofMinor(1_000_000));
 
@@ -173,10 +174,13 @@ public final class BloecoMenu implements Listener {
         int slot = event.getRawSlot();
         if (handleNavigation(player, holder, slot)) return;
         if (holder instanceof HubHolder) {
-            if (slot == 4) openJournal(player);
+            if (slot == 4) openJournal(player, new JournalPage(null, null));
             else if (slot == 12 && banking != null) openBank(player);
             else if (slot == 14) openRecipients(player);
             else if (slot == 16 && roles.anyAdministration(player)) openAdministration(player);
+        } else if (holder instanceof JournalHolder journal) {
+            if (slot == 23 && journal.page.previous() != null) openJournal(player, journal.page.previous());
+            else if (slot == 24 && journal.next != null) openJournal(player, journal.next);
         } else if (holder instanceof RecipientHolder recipients) {
             UUID recipientId = recipients.recipients.get(slot);
             Player recipient = recipientId == null ? null : Bukkit.getPlayer(recipientId);
@@ -203,6 +207,7 @@ public final class BloecoMenu implements Listener {
             else if (slot == 10) openBankAmounts(player, BankAction.DEPOSIT, null, null);
             else if (slot == 12) openBankAmounts(player, BankAction.WITHDRAW, null, null);
             else if (slot == 14 && currentBankPolicy == null) player.sendMessage("贷款信息正在读取，请稍候。");
+            else if (slot == 14 && !currentBankPolicy.lendingEnabled()) player.sendMessage("银行当前暂停放贷。");
             else if (slot == 14) openBankAmounts(player, BankAction.BORROW, null, null);
             else if (slot == 16 && bank.nextLoanId == null) player.sendMessage("当前没有需要偿还的贷款。");
             else if (slot == 16) openBankAmounts(player, BankAction.REPAY, bank.nextLoanId, bank.nextLoanDue);
@@ -428,6 +433,7 @@ public final class BloecoMenu implements Listener {
 
     private static List<String> loanSummaryLore(BankingPolicy policy) {
         if (policy == null) return List.of("贷款利率正在读取…");
+        if (!policy.lendingEnabled()) return List.of("当前暂停放贷");
         return List.of("贷款年化利率：" + basisPoints(policy.loanRateBasisPoints()),
                 "默认期限：" + policy.loanTermDays() + " 天", "利息按实际贷款期限计算");
     }
@@ -449,18 +455,21 @@ public final class BloecoMenu implements Listener {
                 "D级：存在逾期贷款");
     }
 
-    private void openJournal(Player player) {
-        JournalHolder holder = new JournalHolder(this);
+    private void openJournal(Player player, JournalPage page) {
+        JournalHolder holder = new JournalHolder(this, page);
         Inventory inventory = inventory(holder, "Bloeco 我的账单");
         inventory.setItem(13, item(Material.CLOCK, "正在读取账单…", List.of()));
         addNavigation(inventory);
         player.openInventory(inventory);
         var playerAccount = com.blocke.centraleconomy.domain.account.AccountId.player(player.getUniqueId());
-        economy.recentJournal(playerAccount, 21)
+        economy.journalPage(playerAccount, JOURNAL_PAGE_SIZE + 1, page.beforeEntry())
                 .thenAccept(result -> runMain(() -> {
                     if (!isOpen(player, holder)) return;
                     inventory.clear();
                     addNavigation(inventory);
+                    if (page.previous() != null) {
+                        inventory.setItem(23, item(Material.ARROW, "上一页", List.of()));
+                    }
                     if (!result.isSuccess()) {
                         inventory.setItem(13, item(Material.BARRIER, "读取失败", List.of(MessageFormatter.error(result))));
                         return;
@@ -469,11 +478,17 @@ public final class BloecoMenu implements Listener {
                         inventory.setItem(13, item(Material.PAPER, "暂无账单", List.of("完成交易后会显示在这里")));
                         return;
                     }
-                    int slot = 0;
-                    for (var entry : result.value()) {
+                    var entries = result.value();
+                    int visible = Math.min(entries.size(), JOURNAL_PAGE_SIZE);
+                    for (int slot = 0; slot < visible; slot++) {
+                        var entry = entries.get(slot);
                         JournalDisplay.View display = JournalDisplay.forAccount(entry, playerAccount,
                                 ZoneId.systemDefault());
-                        inventory.setItem(slot++, item(Material.PAPER, display.title(), display.lore()));
+                        inventory.setItem(slot, item(Material.PAPER, display.title(), display.lore()));
+                    }
+                    if (entries.size() > visible) {
+                        holder.next = new JournalPage(entries.get(visible - 1).id(), page);
+                        inventory.setItem(24, item(Material.ARROW, "下一页", List.of()));
                     }
                 }));
     }
@@ -738,7 +753,17 @@ public final class BloecoMenu implements Listener {
 
         private AdminHolder(BloecoMenu menu) { super(menu); }
     }
-    private static final class JournalHolder extends Holder { private JournalHolder(BloecoMenu menu) { super(menu); } }
+    private record JournalPage(UUID beforeEntry, JournalPage previous) {}
+
+    private static final class JournalHolder extends Holder {
+        private final JournalPage page;
+        private JournalPage next;
+
+        private JournalHolder(BloecoMenu menu, JournalPage page) {
+            super(menu);
+            this.page = page;
+        }
+    }
     private static final class OverviewHolder extends Holder { private OverviewHolder(BloecoMenu menu) { super(menu); } }
     private static final class BankHolder extends Holder {
         private UUID nextLoanId;

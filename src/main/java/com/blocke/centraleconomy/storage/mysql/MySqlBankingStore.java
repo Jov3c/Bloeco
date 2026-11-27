@@ -64,8 +64,8 @@ public final class MySqlBankingStore implements BankingStore {
     @Override public BankingReceipt repay(UUID player, UUID loan, Money amount, String key) {
         return call(store -> store.repay(player, loan, amount, key));
     }
-    @Override public BankingPlayerSnapshot playerSnapshot(UUID player) {
-        return call(store -> store.playerSnapshot(player));
+    @Override public BankingPlayerSnapshot playerSnapshot(UUID player, boolean accrueInterest) {
+        return call(store -> store.playerSnapshot(player, accrueInterest));
     }
     @Override public BankSnapshot bankSnapshot() { return call(SqliteBankingStore::bankSnapshot); }
     @Override public BankingPolicy updatePolicy(BankingPolicy policy, String actor) {

@@ -23,6 +23,9 @@ class PluginBootstrapTest {
         var plugin = MockBukkit.loadWithConfig(CentralEconomyPlugin.class, config);
         assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
         assertTrue(plugin.getDataFolder().toPath().resolve("economy.db").toFile().isFile());
+        assertTrue(plugin.runtime().banking().readyStage().toCompletableFuture().join().isSuccess());
+        assertFalse(plugin.runtime().banking().bankSnapshot().toCompletableFuture().join()
+                .value().policy().lendingEnabled());
     }
 
     @Test

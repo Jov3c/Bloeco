@@ -354,40 +354,45 @@ public class SqliteBankingStore implements BankingStore {
     }
 
     @Override
-    public synchronized BankingPlayerSnapshot playerSnapshot(UUID playerId) {
+    public synchronized BankingPlayerSnapshot playerSnapshot(UUID playerId, boolean accrueInterest) {
+        if (!accrueInterest) return read(() -> readPlayerSnapshot(playerId));
         return write(() -> {
             accrueDeposit(playerId);
-            AccountId wallet = AccountId.player(playerId);
-            long walletBalance;
-            try { walletBalance = balance(wallet); } catch (LedgerException exception) { walletBalance = 0; }
-            long debt = playerDebt(playerId);
-            BankingPolicy currentPolicy = policy();
-            boolean overdue;
-            UUID nextLoanId = null;
-            Money nextLoanDue = Money.ofMinor(0);
-            try (PreparedStatement statement = connection.prepareStatement("""
-                    SELECT loan_id, due_at_epoch_ms, outstanding_principal_minor, outstanding_interest_minor
-                    FROM bank_loans
-                    WHERE borrower_uuid = ? AND status IN ('ACTIVE','OVERDUE')
-                    ORDER BY due_at_epoch_ms, issued_at_epoch_ms LIMIT 1
-                    """)) {
-                statement.setString(1, playerId.toString());
-                try (ResultSet result = statement.executeQuery()) {
-                    if (result.next()) {
-                        nextLoanId = UUID.fromString(result.getString("loan_id"));
-                        nextLoanDue = Money.ofMinor(Math.addExact(
-                                result.getLong("outstanding_principal_minor"),
-                                result.getLong("outstanding_interest_minor")));
-                        overdue = result.getLong("due_at_epoch_ms") < clock.millis();
-                    } else overdue = false;
-                }
-            }
-            String grade = debt == 0 ? "A" : overdue ? "D"
-                    : debt >= currentPolicy.maximumLoan().minor() * 8L / 10L ? "C" : "B";
-            return new BankingPlayerSnapshot(Money.ofMinor(walletBalance), Money.ofMinor(depositBalance(playerId)),
-                    Money.ofMinor(debt), overdue, grade,
-                    nextLoanId, nextLoanDue);
+            return readPlayerSnapshot(playerId);
         });
+    }
+
+    private BankingPlayerSnapshot readPlayerSnapshot(UUID playerId) throws SQLException {
+        AccountId wallet = AccountId.player(playerId);
+        long walletBalance;
+        try { walletBalance = balance(wallet); } catch (LedgerException exception) { walletBalance = 0; }
+        long debt = playerDebt(playerId);
+        BankingPolicy currentPolicy = policy();
+        boolean overdue;
+        UUID nextLoanId = null;
+        Money nextLoanDue = Money.ofMinor(0);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT loan_id, due_at_epoch_ms, outstanding_principal_minor, outstanding_interest_minor
+                FROM bank_loans
+                WHERE borrower_uuid = ? AND status IN ('ACTIVE','OVERDUE')
+                ORDER BY due_at_epoch_ms, issued_at_epoch_ms LIMIT 1
+                """)) {
+            statement.setString(1, playerId.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                if (result.next()) {
+                    nextLoanId = UUID.fromString(result.getString("loan_id"));
+                    nextLoanDue = Money.ofMinor(Math.addExact(
+                            result.getLong("outstanding_principal_minor"),
+                            result.getLong("outstanding_interest_minor")));
+                    overdue = result.getLong("due_at_epoch_ms") < clock.millis();
+                } else overdue = false;
+            }
+        }
+        String grade = debt == 0 ? "A" : overdue ? "D"
+                : debt >= currentPolicy.maximumLoan().minor() * 8L / 10L ? "C" : "B";
+        return new BankingPlayerSnapshot(Money.ofMinor(walletBalance), Money.ofMinor(depositBalance(playerId)),
+                Money.ofMinor(debt), overdue, grade,
+                nextLoanId, nextLoanDue);
     }
 
     @Override

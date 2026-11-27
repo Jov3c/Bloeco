@@ -21,6 +21,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.blocke.centraleconomy.storage.JournalPageAssertions.assertStableJournalPages;
 
 class SqliteLedgerStoreTest {
     private static final UUID PLAYER_A = UUID.fromString("00000000-0000-0000-0000-00000000000a");
@@ -54,6 +55,11 @@ class SqliteLedgerStoreTest {
         assertEquals(7_500L, store.balance(AccountId.treasury()));
         assertEquals(2_500L, store.balance(AccountId.player(PLAYER_A)));
         assertEquals(2, store.entryCount());
+    }
+
+    @Test
+    void journalCursorContinuesBeforeLastEntryWhenNewEntriesArrive() {
+        assertStableJournalPages(store);
     }
 
     @Test

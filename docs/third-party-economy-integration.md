@@ -58,7 +58,7 @@ if (api == null || !api.version().supportsMajor(1)) {
 }
 ```
 
-Bloeco 只有在权威数据库和完整性检查就绪后才注册服务，停服时先注销服务再关闭队列和数据库。消费者不得缓存跨重启的 Provider 或账户对象。
+Bloeco 在 Paper 的启用阶段注册服务。消费者可在自己的 `onEnable` 获取 Provider，并异步调用 `connect`。请求由有界队列处理，数据库初始化失败时返回 `STORAGE_UNAVAILABLE`，账本处于只读保护时返回 `INTEGRITY_READ_ONLY`。停服时先注销服务，再关闭队列和数据库。消费者不得缓存跨重启的 Provider 或账户对象。
 
 ## 注册机构
 
