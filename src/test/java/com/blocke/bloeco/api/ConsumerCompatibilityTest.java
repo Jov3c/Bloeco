@@ -16,6 +16,25 @@ class ConsumerCompatibilityTest {
     @TempDir Path output;
 
     @Test
+    void developerJarContainsExactlyTheApiClassesProvidedByPaperPlugin() throws Exception {
+        try (var plugin = new JarFile(System.getProperty("bloeco.shadow.jar"));
+             var api = new JarFile(System.getProperty("bloeco.api.jar"))) {
+            var expected = plugin.stream().map(java.util.zip.ZipEntry::getName)
+                    .filter(name -> name.startsWith("com/blocke/bloeco/api/") && name.endsWith(".class")).toList();
+            assertTrue(expected.contains("com/blocke/bloeco/api/BloecoApi.class"));
+            var files = api.stream().filter(entry -> !entry.isDirectory())
+                    .map(java.util.zip.ZipEntry::getName).filter(name -> !name.equals("META-INF/MANIFEST.MF")).toList();
+            assertEquals(java.util.Set.copyOf(expected), java.util.Set.copyOf(files));
+            for (String name : expected) {
+                try (var packaged = plugin.getInputStream(plugin.getEntry(name));
+                     var exported = api.getInputStream(api.getEntry(name))) {
+                    org.junit.jupiter.api.Assertions.assertArrayEquals(packaged.readAllBytes(), exported.readAllBytes(), name);
+                }
+            }
+        }
+    }
+
+    @Test
     void exampleCompilesAgainstShadedPluginAndApiShipsInOneJar() throws Exception {
         Path jar=Path.of(System.getProperty("bloeco.shadow.jar"));
         assertTrue(Files.isRegularFile(jar));
