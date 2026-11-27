@@ -38,7 +38,20 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(21)
 }
 
+val apiJar by tasks.registering(Jar::class) {
+    group = "build"
+    description = "Packages the public Bloeco API for consumer plugins to compile against."
+    archiveClassifier.set("api")
+    from(sourceSets.main.get().output) {
+        include("com/blocke/bloeco/api/**")
+    }
+}
+
+tasks.assemble { dependsOn(apiJar) }
+
 tasks.test {
+    dependsOn(apiJar)
+    systemProperty("bloeco.api.jar", apiJar.get().archiveFile.get().asFile.absolutePath)
     useJUnitPlatform { excludeTags("mysql-integration") }
     dependsOn(tasks.shadowJar)
     systemProperty("bloeco.shadow.jar", tasks.shadowJar.get().archiveFile.get().asFile.absolutePath)

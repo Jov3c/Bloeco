@@ -152,7 +152,7 @@ Redis 断线只会关闭缓存和事件加速：MySQL 已提交的账本事实�
 
 请阅读 [Bloeco 第三方经济接入技术规范](docs/third-party-economy-integration.md)。商店、证券、任务等插件不得直连 Bloeco 数据库或 Redis，必须通过异步原生 API 提交带机构、业务类型、中文说明和幂等键的结算。
 
-消费者在 `plugin.yml` 声明 `depend: [Bloeco]`，将 Bloeco JAR 设为 `compileOnly`，再从 Paper `ServicesManager` 获取 `BloecoApi`。不要 shade API 类，也不要在主线程等待数据库 Future。完整示例见 [examples/bloeco-api-consumer](examples/bloeco-api-consumer)。
+消费者在 `plugin.yml` 声明 `depend: [Bloeco]`，将 Bloeco API JAR 设为 `compileOnly`，再从 Paper `ServicesManager` 获取 `BloecoApi`。不要 shade API 类，也不要在主线程等待数据库 Future。运行 `./gradlew apiJar` 生成开发依赖，再运行 `./gradlew -p examples/bloeco-api-consumer build` 独立编译示例。完整示例见 [examples/bloeco-api-consumer](examples/bloeco-api-consumer)。
 
 接入 API 时只需要记住四条合同：
 

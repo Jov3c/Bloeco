@@ -194,19 +194,22 @@ public final class MySqlEcosystemStore implements EcosystemStore {
                         || !prior.fingerprint().equals(command.fingerprint())) conflict();
                 return reservation;
             }
-            if (reservation.status() != ReservationRecord.Status.ACTIVE) {
-                throw new LedgerException(LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
+            var nextStatus = reservation.statusAfterRelease(command.transitionedAt());
+            boolean active = reservation.status() == ReservationRecord.Status.ACTIVE;
+            if (active) {
+                AccountId player = AccountId.player(reservation.playerId());
+                BalanceRepository.StoredAccount locked = lockOne(connection, player);
+                balances.updateReserved(connection, player,
+                        Math.subtractExact(locked.reserved(), reservation.reservedTotal().minor()));
             }
-
-            AccountId player = AccountId.player(reservation.playerId());
-            BalanceRepository.StoredAccount locked = lockOne(connection, player);
-            balances.updateReserved(connection, player,
-                    Math.subtractExact(locked.reserved(), reservation.reservedTotal().minor()));
-
-            boolean expired = !reservation.expiresAt().isAfter(command.transitionedAt());
-            updateReservation(connection, reservation.reservationId(), expired ? "EXPIRED" : "RELEASED",
-                    command.transitionedAt(), null, expired ? null : command.idempotencyKey(),
-                    expired ? null : command.fingerprint());
+            try {
+                updateReservation(connection, reservation.reservationId(), nextStatus.name(),
+                        active ? command.transitionedAt() : reservation.updatedAt(), null,
+                        command.idempotencyKey(), command.fingerprint());
+            } catch (SQLException failure) {
+                if (failure.getErrorCode() == 1062) conflict();
+                throw failure;
+            }
             return reservations.find(connection, reservation.reservationId(), false).orElseThrow();
         });
     }
@@ -234,6 +237,8 @@ public final class MySqlEcosystemStore implements EcosystemStore {
         Map<AccountId,Long>updatedReserved=new LinkedHashMap<>();
         for(AccountId accountId:ids){var a=locked.get(accountId);if(a==null)throw new LedgerException(
                 LedgerException.Code.ACCOUNT_NOT_FOUND,"account does not exist: "+accountId.value());
+            if (!"ACTIVE".equals(a.status())) throw new LedgerException(
+                    LedgerException.Code.ACCOUNT_FROZEN, "account is not active");
             long value=Math.addExact(a.balance(),deltas.getOrDefault(accountId,0L));
             long reserved=Math.addExact(a.reserved(),reservedDeltas.getOrDefault(accountId,0L));
             if(reserved<0)throw new LedgerException(LedgerException.Code.INTEGRITY_FAILURE,"reserved balance would be negative");

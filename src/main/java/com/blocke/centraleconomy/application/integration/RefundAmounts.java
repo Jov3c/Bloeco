@@ -13,7 +13,7 @@ public final class RefundAmounts {
     public static long taxFor(SettlementRecord charge, Money principal, long refundedPrincipal, long refundedTax) {
         long principalLeft = Math.subtractExact(charge.principal().minor(), refundedPrincipal);
         if (principal.minor() > principalLeft) {
-            throw new LedgerException(LedgerException.Code.INVALID_AMOUNT, "refund exceeds remaining principal");
+            throw new LedgerException(LedgerException.Code.POLICY_REJECTED, "refund exceeds remaining principal");
         }
         long taxLeft = Math.subtractExact(charge.tax().minor(), refundedTax);
         if (principal.minor() == principalLeft) return taxLeft;

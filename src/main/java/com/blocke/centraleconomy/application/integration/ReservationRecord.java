@@ -1,6 +1,7 @@
 package com.blocke.centraleconomy.application.integration;
 
 import com.blocke.centraleconomy.domain.money.Money;
+import com.blocke.centraleconomy.domain.ledger.LedgerException;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -26,5 +27,12 @@ public record ReservationRecord(
         Objects.requireNonNull(fingerprint, "fingerprint");
     }
     public Money reservedTotal() { return principal.plus(tax); }
+    public Status statusAfterRelease(Instant now) {
+        if (status == Status.EXPIRED) return status;
+        if (status != Status.ACTIVE) throw new LedgerException(
+                LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
+        return expiresAt.isAfter(now) ? Status.RELEASED : Status.EXPIRED;
+    }
+
     public enum Status { ACTIVE, CAPTURED, RELEASED, EXPIRED }
 }

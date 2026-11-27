@@ -1,15 +1,15 @@
 # Bloeco 原生经济 API 1.0 接入规范
 
-> **适用版本：** Bloeco `1.5.x` · API `1.0.x` · Paper `1.21.11`<br>
+> **适用版本：** Bloeco `1.6.x` · API `1.0.x` · Paper `1.21.11`<br>
 > **文档性质：** 对外兼容合同。实现细节、数据库表和 Redis 主题都不属于 Consumer 的兼容面。
 
-Bloeco 1.5 内嵌并通过 Paper `ServicesManager` 发布 `com.blocke.bloeco.api.BloecoApi`。商店、证券、领地、拍卖、任务等插件只保存自己的业务数据；玩家余额、机构账户、税费、冻结资金、退款和永久账单全部由 Bloeco 管理。
+Bloeco 内嵌并通过 Paper `ServicesManager` 发布 `com.blocke.bloeco.api.BloecoApi`。商店、证券、领地、拍卖、任务等插件只保存自己的业务数据；玩家余额、机构账户、税费、冻结资金、退款和永久账单全部由 Bloeco 管理。
 
 这份文档回答三个问题：如何发现 API、如何提交一笔不会重复扣款的结算、如何在异常或结果未知时安全恢复。若只想快速接入，先按下面的清单完成；若要实现订单、拍卖或证券等延迟交付业务，再阅读“冻结资金”章节。
 
 ## 一页接入清单
 
-1. 在 `plugin.yml` 写 `depend: [Bloeco]`，把 Bloeco JAR 设为 `compileOnly`。
+1. 在 `plugin.yml` 写 `depend: [Bloeco]`，把 Bloeco API JAR 设为 `compileOnly`。
 2. 从 `ServicesManager` 获取 `BloecoApi`，检查 `supportsMajor(1)`；不存在或版本不兼容时让本插件失败关闭。
 3. 用稳定、永久不变的 `clientId` 注册机构，并只声明本插件真正需要的能力。
 4. 为每次写操作生成稳定的 `businessReference` 和 `idempotencyKey`；重试必须复用原键。
@@ -38,11 +38,11 @@ Bloeco 不提供 `give`、`depositPlayer`、`setBalance` 或任意 Posting 接�
 depend: [Bloeco]
 ```
 
-开发时把 Bloeco 成品 JAR 作为 `compileOnly`，不要把 `com.blocke.bloeco.api` 复制或 shade 到消费者 JAR，否则 Paper 会产生类加载器不一致。API 与实现位于同一个 Bloeco JAR，不需要独立前置：
+开发时在 Bloeco 源码根目录运行 `./gradlew apiJar`，将 `build/libs/` 下的 `-api.jar` 复制到消费者工程的 `libs/`。用 `compileOnly` 声明编译依赖。服务器安装完整 Bloeco 插件，由它在运行时提供 API 类。
 
 ```kotlin
 dependencies {
-    compileOnly(files("libs/Bloeco-1.6.0-SNAPSHOT.jar"))
+    compileOnly(files("libs/Bloeco-1.6.0-SNAPSHOT-api.jar"))
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
 }
 ```
@@ -147,7 +147,7 @@ client.refund(originalOperationId, MoneyAmount.positive(refundMinor),
 2. `captureReservation` 只允许一次，把本金转入指定机构账户并把税转入税收账户。
 3. `releaseReservation`、到期和捕获互斥，只会有一个终态：`CAPTURED`、`RELEASED` 或 `EXPIRED`。
 
-预授权、捕获和释放都要使用各自稳定的幂等键。不要先查余额再扣款；以返回结果为准。
+预授权、捕获和释放都要使用各自稳定的幂等键。释放已过期的预授权返回 `EXPIRED`。复用相同键和内容会返回原结果，修改释放请求内容会返回 `IDEMPOTENCY_CONFLICT`。不要先查余额再扣款；以返回结果为准。
 
 ## 错误处理
 

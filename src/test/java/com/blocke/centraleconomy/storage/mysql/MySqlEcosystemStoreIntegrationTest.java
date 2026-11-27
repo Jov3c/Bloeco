@@ -17,6 +17,10 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
+import com.blocke.centraleconomy.application.integration.FundReservationService;
+import com.blocke.centraleconomy.domain.ledger.LedgerException;
+import static com.blocke.centraleconomy.storage.ReservationAssertions.assertExpiredRelease;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -46,9 +50,18 @@ class MySqlEcosystemStoreIntegrationTest {
                 TaxRuleService taxes=new TaxRuleService(ledger,clock);taxes.initializeDefaults();
                 new InstitutionService(ecosystem,clock).registerOrResume("Test-Shop-"+run,"test.Shop","1.0",
                         new InstitutionDescriptor(client,"测试商店",Set.of(InstitutionCapability.CHARGE_PLAYER,
-                                InstitutionCapability.REFUND),
+                                InstitutionCapability.REFUND, InstitutionCapability.RESERVE_PLAYER_FUNDS),
                                 Set.of("sales")));
+                assertExpiredRelease(new FundReservationService(ecosystem, taxes, clock), client, player, clock);
                 var service = new InstitutionSettlementService(ecosystem, taxes, clock);
+                var wallet = AccountId.player(player);
+                setAccountStatus(tx, wallet, "FROZEN");
+                var frozen = assertThrows(LedgerException.class,
+                        () -> service.chargePlayer(client, player, "sales", Money.ofMinor(1_000), SettlementKind.PURCHASE,
+                                new OperationContext("test.order", run, "冻结账户结算", "frozen-" + run)));
+                assertEquals(LedgerException.Code.ACCOUNT_FROZEN, frozen.code());
+                assertEquals(20_000, ecosystem.balance(wallet));
+                setAccountStatus(tx, wallet, "ACTIVE");
                 var receipt=service.chargePlayer(client,player,"sales",
                         Money.ofMinor(1_000), SettlementKind.PURCHASE,
                         new OperationContext("test.order",run,"MySQL 购买测试","charge-"+run));
@@ -60,5 +73,16 @@ class MySqlEcosystemStoreIntegrationTest {
                 assertEquals(0, ecosystem.balance(AccountId.plugin(client, "sales")));
             }
         }
+    }
+
+    private static void setAccountStatus(MySqlTransactionManager tx, AccountId wallet, String status) {
+        tx.execute(connection -> {
+            try (var update = connection.prepareStatement("UPDATE accounts SET status=? WHERE account_id=?")) {
+                update.setString(1, status);
+                update.setString(2, wallet.value());
+                assertEquals(1, update.executeUpdate());
+            }
+            return null;
+        });
     }
 }

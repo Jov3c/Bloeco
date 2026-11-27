@@ -114,8 +114,12 @@ public final class AsyncInstitutionFacade implements AutoCloseable {
         @Override public String clientId(){return institution.clientId();}
         @Override public Set<InstitutionCapability> capabilities(){return institution.capabilities();}
         @Override public Map<String,InstitutionAccount> accounts(){return publicAccounts;}
-        @Override public CompletionStage<EconomyResult<MoneyAmount>> walletBalance(UUID player){return submit(false,s->
-                new MoneyAmount(s.store.balance(AccountId.player(player))));}
+        @Override public CompletionStage<EconomyResult<MoneyAmount>> walletBalance(UUID player) {
+            return submit(false, services -> {
+                capability(InstitutionCapability.READ_OWN_BALANCE);
+                return new MoneyAmount(services.store.balance(AccountId.player(player)));
+            });
+        }
         @Override public CompletionStage<EconomyResult<MoneyAmount>> balance(InstitutionAccount account){return submit(false,s->{
             capability(InstitutionCapability.READ_OWN_BALANCE);return new MoneyAmount(s.store.balance(handle(account).accountId));});}
         @Override public CompletionStage<EconomyResult<SettlementReceipt>> chargePlayer(UUID player,InstitutionAccount account,

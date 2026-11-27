@@ -23,6 +23,7 @@ import java.time.ZoneOffset;
 import java.util.Set;
 import java.util.UUID;
 
+import static com.blocke.centraleconomy.storage.ReservationAssertions.assertExpiredRelease;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -82,11 +83,7 @@ class FundReservationServiceTest {
             assertEquals(released.status(), fixture.service.release("bloeco.auction", active.reservationId(),
                     context("取消", "release-1")).status());
 
-            ReservationRecord expired = fixture.service.reserve("bloeco.auction", PLAYER,
-                    Money.ofMinor(1_000), CLOCK.instant().minusSeconds(1), context("过期冻结", "reserve-3"));
-            assertEquals(ReservationRecord.Status.EXPIRED,
-                    fixture.service.release("bloeco.auction", expired.reservationId(),
-                            context("到期释放", "release-expired")).status());
+            assertExpiredRelease(fixture.service, "bloeco.auction", PLAYER, CLOCK);
             assertEquals(20_000, fixture.store.availableBalance(PLAYER));
         }
     }
