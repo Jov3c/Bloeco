@@ -168,7 +168,9 @@ public final class AsyncEconomyFacade implements AutoCloseable {
     public CompletionStage<Result<IntegrityReport>> verifyIntegrity() {
         return submit(context -> {
             IntegrityReport report = context.queries.verifyIntegrity();
-            if (!report.valid()) readOnly = true;
+            if (!report.valid()) {
+                synchronized (this) { readOnly = true; }
+            }
             return report;
         });
     }

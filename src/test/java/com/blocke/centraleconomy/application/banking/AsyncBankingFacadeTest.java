@@ -38,7 +38,14 @@ class AsyncBankingFacadeTest {
                         + "WHERE account_id = 'fiscal:treasury'"));
                 assertEquals(1, statement.executeUpdate("UPDATE bank_deposits SET last_interest_epoch_ms = 0"));
             }
-            assertFalse(runtime.verifyNow().toCompletableFuture().join().value().valid());
+            java.util.concurrent.CompletableFuture<com.blocke.centraleconomy.application.result.Result<
+                    com.blocke.centraleconomy.application.IntegrityReport>> verification;
+            synchronized (runtime.facade()) {
+                verification = runtime.verifyNow().toCompletableFuture();
+                Thread.sleep(100);
+                assertFalse(verification.isDone(), "read-only transition must wait for the bank transaction guard");
+            }
+            assertFalse(verification.join().value().valid());
             assertEquals(ErrorCode.INTEGRITY_FAILURE,
                     bank.deposit(player, Money.parse("10"), "blocked-deposit").toCompletableFuture().join().errorCode());
             assertEquals(Money.parse("10"), bank.playerSnapshot(player).toCompletableFuture().join().value().deposit());
