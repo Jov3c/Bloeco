@@ -58,7 +58,9 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 new PlayerStarterFundsListener(this, runtime.facade(), initialPlayerBalance), this);
         long ticks = Math.multiplyExact(config.integrityIntervalMinutes(), 1_200L);
         getServer().getScheduler().runTaskTimer(this, () -> runtime.verifyNow().thenAccept(result -> {
-            if (!result.isSuccess() || !result.value().valid()) {
+            if (!result.isSuccess()) {
+                getLogger().warning("Ledger integrity check could not complete: " + result.message());
+            } else if (!result.value().valid()) {
                 getLogger().severe("Central ledger integrity check failed; Bloeco is now read-only.");
             }
         }), ticks, ticks);

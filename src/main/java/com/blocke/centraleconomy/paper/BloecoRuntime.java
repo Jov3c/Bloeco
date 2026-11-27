@@ -60,7 +60,7 @@ public final class BloecoRuntime implements AutoCloseable {
         AsyncEconomyFacade economy = AsyncEconomyFacade.sqlite(databasePath, clock, initialTreasury);
         AsyncBankingFacade bank = new AsyncBankingFacade(
                 () -> new SqliteBankingStore(databasePath, clock), economy.readyStage(), initialBankCapital, policy,
-                economy::isReadOnly);
+                economy::isReadOnly, economy);
         AsyncInstitutionFacade institutions = AsyncInstitutionFacade.sqlite(
                 databasePath, economy.readyStage(), economy::isReadOnly, queueCapacity);
         return new BloecoRuntime(economy, bank, null, institutions, null);
@@ -100,7 +100,7 @@ public final class BloecoRuntime implements AutoCloseable {
                 clock, initialTreasury);
         AsyncBankingFacade bank = new AsyncBankingFacade(
                 () -> new MySqlBankingStore(dataSource, transactions, clock),
-                economy.readyStage(), initialBankCapital, policy, economy::isReadOnly);
+                economy.readyStage(), initialBankCapital, policy, economy::isReadOnly, economy);
         AsyncInstitutionFacade institutions = AsyncInstitutionFacade.mysql(dataSource, transactions,
                 economy.readyStage(), economy::isReadOnly, apiWorkers, queueCapacity);
         AsyncClusterDirectory directory = new AsyncClusterDirectory(

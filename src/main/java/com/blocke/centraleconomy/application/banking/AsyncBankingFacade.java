@@ -31,6 +31,7 @@ public final class AsyncBankingFacade implements AutoCloseable {
     private final AtomicReference<Thread> worker = new AtomicReference<>();
     private final CompletableFuture<Result<Void>> ready = new CompletableFuture<>();
     private final BooleanSupplier readOnly;
+    private final Object writeGuard;
     private volatile BankingStore store;
 
     public AsyncBankingFacade(
@@ -44,6 +45,13 @@ public final class AsyncBankingFacade implements AutoCloseable {
     public AsyncBankingFacade(Supplier<? extends BankingStore> storeFactory,
                               CompletionStage<Result<Void>> economyReady,
                               Money initialCapital, BankingPolicy policy, BooleanSupplier readOnly) {
+        this(storeFactory, economyReady, initialCapital, policy, readOnly, new Object());
+    }
+
+    public AsyncBankingFacade(Supplier<? extends BankingStore> storeFactory,
+                              CompletionStage<Result<Void>> economyReady, Money initialCapital,
+                              BankingPolicy policy, BooleanSupplier readOnly, Object writeGuard) {
+        this.writeGuard = Objects.requireNonNull(writeGuard, "writeGuard");
         Objects.requireNonNull(storeFactory, "storeFactory");
         Objects.requireNonNull(economyReady, "economyReady");
         Objects.requireNonNull(initialCapital, "initialCapital");
@@ -70,7 +78,9 @@ public final class AsyncBankingFacade implements AutoCloseable {
             }
             try {
                 BankingStore opened = storeFactory.get();
-                if (!readOnly.getAsBoolean()) opened.initialize(initialCapital, policy);
+                synchronized (writeGuard) {
+                    if (!readOnly.getAsBoolean()) opened.initialize(initialCapital, policy);
+                }
                 store = opened;
                 ready.complete(Result.success(null));
             } catch (RuntimeException exception) {
@@ -136,11 +146,13 @@ public final class AsyncBankingFacade implements AutoCloseable {
                     return;
                 }
                 try {
-                    if (writes && readOnly.getAsBoolean()) {
-                        result.complete(Result.failure(ErrorCode.INTEGRITY_FAILURE, "银行当前处于只读保护状态。"));
-                        return;
+                    synchronized (writeGuard) {
+                        if (writes && readOnly.getAsBoolean()) {
+                            result.complete(Result.failure(ErrorCode.INTEGRITY_FAILURE, "银行当前处于只读保护状态。"));
+                            return;
+                        }
+                        result.complete(Result.success(operation.apply(current)));
                     }
-                    result.complete(Result.success(operation.apply(current)));
                 } catch (LedgerException exception) {
                     result.complete(Result.failure(map(exception.code()), exception.getMessage()));
                 } catch (IllegalArgumentException exception) {
