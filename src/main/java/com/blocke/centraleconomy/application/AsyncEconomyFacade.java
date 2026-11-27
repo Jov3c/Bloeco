@@ -179,7 +179,11 @@ public final class AsyncEconomyFacade implements AutoCloseable {
 
     public CompletionStage<Result<List<JournalEntry>>> recentJournal(
             AccountId accountId, int limit) {
-        return submit(context -> context.queries.recentJournal(accountId, limit));
+        return journalPage(accountId, limit, null);
+    }
+
+    public CompletionStage<Result<List<JournalEntry>>> journalPage(AccountId accountId, int limit, UUID beforeEntry) {
+        return submit(context -> context.queries.journalPage(accountId, limit, beforeEntry));
     }
 
     public boolean isReadOnly() {

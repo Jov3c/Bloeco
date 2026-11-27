@@ -47,12 +47,6 @@ public class CentralEconomyPlugin extends JavaPlugin {
         ConfigurationSnapshot config = validatedConfiguration(initialTreasury, initialPlayerBalance, bankCapital, bankPolicy);
         ClusterSettings cluster = configuredCluster(config);
         runtime = createRuntime(config, initialTreasury, bankCapital, bankPolicy, cluster != null);
-        runtime.readyStage().thenAccept(result -> {
-            if (!result.isSuccess() || !isEnabled() || apiProvider != null) return;
-            apiProvider = new BloecoApiProvider(runtime.institutions());
-            getServer().getServicesManager().register(BloecoApi.class, apiProvider, this, ServicePriority.Normal);
-            getLogger().info("Bloeco ecosystem API is ready (API " + apiProvider.version() + ").");
-        });
         connectRedisIfEnabled(config);
         RoleAccess roles = new RoleAccess();
         BloecoMenu menu = new BloecoMenu(this, runtime.facade(), runtime.banking(), roles);
@@ -68,6 +62,12 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 getLogger().severe("Central ledger integrity check failed; Bloeco is now read-only.");
             }
         }), ticks, ticks);
+        apiProvider = new BloecoApiProvider(runtime.institutions());
+        getServer().getServicesManager().register(BloecoApi.class, apiProvider, this, ServicePriority.Normal);
+        runtime.readyStage().thenAccept(result -> {
+            if (result.isSuccess()) getLogger().info("Bloeco ledger is ready.");
+            else getLogger().severe("Bloeco ledger could not start: " + result.message());
+        });
     }
 
     @Override
@@ -119,7 +119,7 @@ public class CentralEconomyPlugin extends JavaPlugin {
                 configuredBasisPoints("bank.loan-rate-bps", 500),
                 configuredBasisPoints("bank.reserve-ratio-bps", 2000),
                 configuredPositiveMoney("bank.maximum-loan", "10000.00"),
-                getConfig().getBoolean("bank.lending-enabled", true),
+                getConfig().getBoolean("bank.lending-enabled", false),
                 Math.max(1, getConfig().getInt("bank.loan-term-days", 7)));
     }
 

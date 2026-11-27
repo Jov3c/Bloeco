@@ -20,6 +20,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -29,6 +30,7 @@ public final class AsyncBankingFacade implements AutoCloseable {
     private final AtomicBoolean accepting = new AtomicBoolean(true);
     private final AtomicReference<Thread> worker = new AtomicReference<>();
     private final CompletableFuture<Result<Void>> ready = new CompletableFuture<>();
+    private final BooleanSupplier readOnly;
     private volatile BankingStore store;
 
     public AsyncBankingFacade(
@@ -36,10 +38,17 @@ public final class AsyncBankingFacade implements AutoCloseable {
             CompletionStage<Result<Void>> economyReady,
             Money initialCapital,
             BankingPolicy policy) {
+        this(storeFactory, economyReady, initialCapital, policy, () -> false);
+    }
+
+    public AsyncBankingFacade(Supplier<? extends BankingStore> storeFactory,
+                              CompletionStage<Result<Void>> economyReady,
+                              Money initialCapital, BankingPolicy policy, BooleanSupplier readOnly) {
         Objects.requireNonNull(storeFactory, "storeFactory");
         Objects.requireNonNull(economyReady, "economyReady");
         Objects.requireNonNull(initialCapital, "initialCapital");
         Objects.requireNonNull(policy, "policy");
+        this.readOnly = Objects.requireNonNull(readOnly, "readOnly");
         executor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
                 new ArrayBlockingQueue<>(256), task -> {
             Thread thread = new Thread(task, "Bloeco-Banking-1");
@@ -61,7 +70,7 @@ public final class AsyncBankingFacade implements AutoCloseable {
             }
             try {
                 BankingStore opened = storeFactory.get();
-                opened.initialize(initialCapital, policy);
+                if (!readOnly.getAsBoolean()) opened.initialize(initialCapital, policy);
                 store = opened;
                 ready.complete(Result.success(null));
             } catch (RuntimeException exception) {
@@ -101,11 +110,11 @@ public final class AsyncBankingFacade implements AutoCloseable {
     }
 
     public CompletionStage<Result<BankingPlayerSnapshot>> playerSnapshot(UUID playerId) {
-        return submit(value -> value.playerSnapshot(playerId));
+        return submit(false, value -> value.playerSnapshot(playerId, !readOnly.getAsBoolean()));
     }
 
     public CompletionStage<Result<BankSnapshot>> bankSnapshot() {
-        return submit(BankingStore::bankSnapshot);
+        return submit(false, BankingStore::bankSnapshot);
     }
 
     public CompletionStage<Result<BankingPolicy>> updatePolicy(BankingPolicy policy, String actorId) {
@@ -113,6 +122,10 @@ public final class AsyncBankingFacade implements AutoCloseable {
     }
 
     private <T> CompletionStage<Result<T>> submit(Function<BankingStore, T> operation) {
+        return submit(true, operation);
+    }
+
+    private <T> CompletionStage<Result<T>> submit(boolean writes, Function<BankingStore, T> operation) {
         if (!accepting.get()) return CompletableFuture.completedFuture(unavailable());
         CompletableFuture<Result<T>> result = new CompletableFuture<>();
         try {
@@ -123,6 +136,10 @@ public final class AsyncBankingFacade implements AutoCloseable {
                     return;
                 }
                 try {
+                    if (writes && readOnly.getAsBoolean()) {
+                        result.complete(Result.failure(ErrorCode.INTEGRITY_FAILURE, "银行当前处于只读保护状态。"));
+                        return;
+                    }
                     result.complete(Result.success(operation.apply(current)));
                 } catch (LedgerException exception) {
                     result.complete(Result.failure(map(exception.code()), exception.getMessage()));

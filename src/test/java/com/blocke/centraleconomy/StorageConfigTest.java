@@ -13,6 +13,7 @@ class StorageConfigTest {
         try (InputStream input = StorageConfigTest.class.getResourceAsStream("/config.yml")) {
             String config = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             assertTrue(config.contains("  type: sqlite"));
+            assertTrue(config.contains("  lending-enabled: false"));
             assertTrue(config.lines().anyMatch(line -> line.stripLeading().startsWith("jdbc-url:")
                     && line.contains("createDatabaseIfNotExist=true")));
             assertTrue(config.contains("  enabled: true"));

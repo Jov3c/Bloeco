@@ -251,7 +251,7 @@ api.connect(this, InstitutionDescriptor.of("bloeco.shop", "Bloeco 商店"))
 必须覆盖：
 
 - API Consumer 不引用插件内部包也能编译；
-- Provider 只在 Runtime 完全就绪后注册，并在停用时注销；
+- Provider 在插件启用时注册，并在停用时注销。异步请求由有界队列等待账本就绪。
 - 机构重复注册恢复同一账户，不重复创建；
 - 无权限机构不能使用未授权能力或其他机构账户；
 - 玩家扣款、机构付款、退款和资金预留保持货币守恒；

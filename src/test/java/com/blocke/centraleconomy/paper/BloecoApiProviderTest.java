@@ -15,10 +15,9 @@ class BloecoApiProviderTest {
     @AfterEach void close(){if(MockBukkit.isMocked())MockBukkit.unmock();}
 
     @Test
-    void serviceAppearsAfterReadinessAndUnregistersOnDisable(){
+    void serviceIsDiscoverableAtEnableAndUnregistersOnDisable(){
         var server=MockBukkit.mock();
         CentralEconomyPlugin plugin=MockBukkit.load(CentralEconomyPlugin.class);
-        plugin.runtime().readyStage().toCompletableFuture().join();
         BloecoApi api=server.getServicesManager().load(BloecoApi.class);
         assertNotNull(api);assertEquals(ApiVersion.CURRENT,api.version());
         server.getPluginManager().disablePlugin(plugin);

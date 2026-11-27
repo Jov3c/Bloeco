@@ -605,22 +605,41 @@ public final class MySqlLedgerStore implements LedgerStore {
     }
 
     @Override
-    public List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
+    public List<JournalEntry> journalPage(Optional<AccountId> accountId, int limit, UUID beforeEntry) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("journal limit must be between 1 and 100");
+        return transactions.readSnapshot(snapshot -> {
+            connection.bind(snapshot);
+            try {
+                return readJournalPage(accountId, limit, beforeEntry);
+            } finally {
+                connection.unbind();
+            }
+        });
+    }
+
+    private List<JournalEntry> readJournalPage(Optional<AccountId> accountId, int limit, UUID beforeEntry) {
         String sql = accountId.isPresent() ? """
-                SELECT DISTINCT j.entry_id, j.created_at_epoch_ms, j.entry_id AS journal_rowid
+                SELECT DISTINCT j.entry_id, j.created_at_epoch_ms, j.entry_id AS journal_order
                 FROM journal_entries j JOIN postings p ON p.entry_id = j.entry_id
-                WHERE p.account_id = ? ORDER BY j.created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                WHERE p.account_id = ?
                 """ : """
-                SELECT entry_id, created_at_epoch_ms, entry_id AS journal_rowid FROM journal_entries
-                ORDER BY created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                SELECT j.entry_id, j.created_at_epoch_ms, j.entry_id AS journal_order FROM journal_entries j
                 """;
+        if (beforeEntry != null) {
+            sql += (accountId.isPresent() ? " AND " : " WHERE ") + """
+                    (j.created_at_epoch_ms, j.entry_id) < (
+                        SELECT created_at_epoch_ms, entry_id FROM journal_entries WHERE entry_id = ?
+                    )
+                    """;
+        }
+        sql += " ORDER BY j.created_at_epoch_ms DESC, journal_order DESC LIMIT ?";
         List<UUID> ids = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             int index = 1;
             if (accountId.isPresent()) statement.setString(index++, accountId.orElseThrow().value());
+            if (beforeEntry != null) statement.setString(index++, beforeEntry.toString());
             statement.setInt(index, limit);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) ids.add(UUID.fromString(result.getString("entry_id")));
@@ -636,15 +655,20 @@ public final class MySqlLedgerStore implements LedgerStore {
     @Override
     public IntegrityReport verifyIntegrity() {
         requireOpen();
+        return transactions.readSnapshot(this::verifyIntegritySnapshot);
+    }
+
+    private IntegrityReport verifyIntegritySnapshot(Connection snapshot) throws SQLException {
         List<String> violations = new ArrayList<>();
-        try (Statement statement = connection.createStatement();
-             ResultSet journals = statement.executeQuery("""
+        try (Statement statement = snapshot.createStatement()) {
+            try (ResultSet journals = statement.executeQuery("""
                      SELECT entry_id, COUNT(*) AS line_count, SUM(amount_minor) AS line_sum
                      FROM postings GROUP BY entry_id
                      """)) {
-            while (journals.next()) {
-                if (journals.getInt("line_count") < 2 || journals.getLong("line_sum") != 0) {
-                    violations.add("unbalanced journal " + journals.getString("entry_id"));
+                while (journals.next()) {
+                    if (journals.getInt("line_count") < 2 || journals.getLong("line_sum") != 0) {
+                        violations.add("unbalanced journal " + journals.getString("entry_id"));
+                    }
                 }
             }
             Map<String, Long> materialized = new HashMap<>();
@@ -668,8 +692,6 @@ public final class MySqlLedgerStore implements LedgerStore {
                 }
             }
             return violations.isEmpty() ? IntegrityReport.validReport() : new IntegrityReport(false, violations);
-        } catch (SQLException exception) {
-            throw storageFailure("unable to verify ledger integrity", exception);
         }
     }
 

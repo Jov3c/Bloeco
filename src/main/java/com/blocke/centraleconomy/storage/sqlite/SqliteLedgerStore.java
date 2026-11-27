@@ -569,22 +569,30 @@ public final class SqliteLedgerStore implements LedgerStore {
     }
 
     @Override
-    public synchronized List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
+    public synchronized List<JournalEntry> journalPage(Optional<AccountId> accountId, int limit, UUID beforeEntry) {
         requireOpen();
         Objects.requireNonNull(accountId, "accountId");
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("journal limit must be between 1 and 100");
         String sql = accountId.isPresent() ? """
-                SELECT DISTINCT j.entry_id, j.created_at_epoch_ms, j.rowid AS journal_rowid
+                SELECT DISTINCT j.entry_id, j.created_at_epoch_ms, j.rowid AS journal_order
                 FROM journal_entries j JOIN postings p ON p.entry_id = j.entry_id
-                WHERE p.account_id = ? ORDER BY j.created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                WHERE p.account_id = ?
                 """ : """
-                SELECT entry_id, created_at_epoch_ms, rowid AS journal_rowid FROM journal_entries
-                ORDER BY created_at_epoch_ms DESC, journal_rowid DESC LIMIT ?
+                SELECT j.entry_id, j.created_at_epoch_ms, j.rowid AS journal_order FROM journal_entries j
                 """;
+        if (beforeEntry != null) {
+            sql += (accountId.isPresent() ? " AND " : " WHERE ") + """
+                    (j.created_at_epoch_ms, j.rowid) < (
+                        SELECT created_at_epoch_ms, rowid FROM journal_entries WHERE entry_id = ?
+                    )
+                    """;
+        }
+        sql += " ORDER BY j.created_at_epoch_ms DESC, journal_order DESC LIMIT ?";
         List<UUID> ids = new ArrayList<>();
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             int index = 1;
             if (accountId.isPresent()) statement.setString(index++, accountId.orElseThrow().value());
+            if (beforeEntry != null) statement.setString(index++, beforeEntry.toString());
             statement.setInt(index, limit);
             try (ResultSet result = statement.executeQuery()) {
                 while (result.next()) ids.add(UUID.fromString(result.getString("entry_id")));

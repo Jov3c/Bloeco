@@ -16,7 +16,10 @@ public interface BankingStore extends AutoCloseable {
     BankingReceipt withdrawAll(UUID playerId, String idempotencyKey);
     LoanReceipt borrow(UUID playerId, Money principal, String idempotencyKey);
     BankingReceipt repay(UUID playerId, UUID loanId, Money amount, String idempotencyKey);
-    BankingPlayerSnapshot playerSnapshot(UUID playerId);
+    default BankingPlayerSnapshot playerSnapshot(UUID playerId) {
+        return playerSnapshot(playerId, true);
+    }
+    BankingPlayerSnapshot playerSnapshot(UUID playerId, boolean accrueInterest);
     BankSnapshot bankSnapshot();
     BankingPolicy updatePolicy(BankingPolicy policy, String actorId);
     @Override void close();

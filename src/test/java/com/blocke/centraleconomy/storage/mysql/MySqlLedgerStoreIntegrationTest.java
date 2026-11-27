@@ -6,6 +6,7 @@ import com.blocke.centraleconomy.application.TaxRuleService;
 import com.blocke.centraleconomy.domain.account.AccountId;
 import com.blocke.centraleconomy.domain.money.Money;
 import java.sql.DriverManager;
+import java.sql.Connection;
 import java.time.Clock;
 import java.util.UUID;
 import org.junit.jupiter.api.Tag;
@@ -14,10 +15,52 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static com.blocke.centraleconomy.storage.JournalPageAssertions.assertStableJournalPages;
 
 @Tag("mysql-integration")
 class MySqlLedgerStoreIntegrationTest {
     private static final UUID TEST_PLAYER = UUID.fromString("00000000-0000-0000-0000-000000001201");
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "BLOECO_MYSQL_TEST_URL", matches = ".+")
+    void journalCursorContinuesBeforeLastEntryWhenNewEntriesArrive() {
+        try (var ledger = new MySqlLedgerStore(System.getenv("BLOECO_MYSQL_TEST_URL"),
+                System.getenv("BLOECO_MYSQL_TEST_USER"), System.getenv("BLOECO_MYSQL_TEST_PASSWORD"), 2)) {
+            assertStableJournalPages(ledger);
+        }
+    }
+
+    @Test
+    @EnabledIfEnvironmentVariable(named = "BLOECO_MYSQL_TEST_URL", matches = ".+")
+    void integritySnapshotDoesNotObserveWritesCommittedBetweenReads() {
+        try (var source = new BloecoDataSource(System.getenv("BLOECO_MYSQL_TEST_URL"),
+                System.getenv("BLOECO_MYSQL_TEST_USER"), System.getenv("BLOECO_MYSQL_TEST_PASSWORD"), 2)) {
+            var transactions = new MySqlTransactionManager(source.dataSource());
+            try (var ledger = new MySqlLedgerStore(source, transactions)) {
+                Account player = Account.player(UUID.randomUUID());
+                transactions.readSnapshot(connection -> {
+                    assertTrue(connection.isReadOnly());
+                    assertEquals(Connection.TRANSACTION_REPEATABLE_READ, connection.getTransactionIsolation());
+                    assertEquals(0, countAccount(connection, player.id()));
+                    ledger.createAccount(player);
+                    assertEquals(0, countAccount(connection, player.id()));
+                    return null;
+                });
+                assertEquals(0L, ledger.balance(player.id()));
+            }
+        }
+    }
+
+    private static int countAccount(Connection connection, AccountId account) throws java.sql.SQLException {
+        try (var statement = connection.prepareStatement(
+                "SELECT COUNT(*) FROM account_balances WHERE account_id = ?")) {
+            statement.setString(1, account.value());
+            try (var row = statement.executeQuery()) {
+                row.next();
+                return row.getInt(1);
+            }
+        }
+    }
 
     @Test
     @EnabledIfEnvironmentVariable(named = "BLOECO_MYSQL_TEST_URL", matches = ".+")

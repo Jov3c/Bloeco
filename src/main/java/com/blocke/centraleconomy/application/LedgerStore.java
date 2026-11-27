@@ -43,7 +43,10 @@ public interface LedgerStore extends AutoCloseable {
     Map<AccountClass, Long> accountClassTotals();
     long playerCirculation();
     Map<JournalType, Long> journalVolumeSince(Instant since);
-    List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit);
+    default List<JournalEntry> recentEntries(Optional<AccountId> accountId, int limit) {
+        return journalPage(accountId, limit, null);
+    }
+    List<JournalEntry> journalPage(Optional<AccountId> accountId, int limit, UUID beforeEntry);
     IntegrityReport verifyIntegrity();
     @Override void close();
 }
