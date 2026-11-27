@@ -122,6 +122,10 @@ public final class BloecoMenu implements Listener {
                 viewer -> roles.allows(viewer, RoleAccess.TAX), this::openTaxes);
         addAdminButton(player, holder, 12, item(Material.EMERALD_BLOCK, "申请发行", List.of("仅创建申请，不会立即增发")),
                 monetary, viewer -> openAmountSelection(viewer, AdminAction.REQUEST_ISSUE));
+        addAdminButton(player, holder, 11, item(Material.WRITABLE_BOOK, "审批发行", List.of("输入另一名管理员创建的申请编号")),
+                monetary, viewer -> beginAmountInput(viewer, AmountInput.issuance(InputKind.APPROVE)));
+        addAdminButton(player, holder, 13, item(Material.GOLD_INGOT, "执行发行", List.of("输入已审批的申请编号")),
+                monetary, viewer -> beginAmountInput(viewer, AmountInput.issuance(InputKind.EXECUTE)));
         addAdminButton(player, holder, 14, item(Material.COAL_BLOCK, "回收货币", List.of("从国库永久退出流通")),
                 monetary, viewer -> openAmountSelection(viewer, AdminAction.RETIRE));
         addAdminButton(player, holder, 16, item(Material.COMPARATOR, "校验总账", List.of("重算分录与账户余额")),
@@ -549,7 +553,7 @@ public final class BloecoMenu implements Listener {
     private void beginAmountInput(Player player, AmountInput input) {
         amountInputs.put(player.getUniqueId(), input);
         player.closeInventory();
-        player.sendMessage("请在聊天栏输入金额，输入“取消”可返回。有效期 60 秒。");
+        player.sendMessage("请在聊天栏输入" + (input.isIssuance() ? "发行申请编号" : "金额") + "，输入“取消”可返回。有效期 60 秒。");
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             if (amountInputs.remove(player.getUniqueId(), input)) {
                 player.sendMessage("输入已超时，请重新操作。");
@@ -559,7 +563,30 @@ public final class BloecoMenu implements Listener {
 
     private void completeAmountInput(Player player, AmountInput input, String text) {
         if ("取消".equalsIgnoreCase(text) || "cancel".equalsIgnoreCase(text)) {
-            reopenAmountInputParent(player, input);
+            if (input.isIssuance()) openAdministration(player);
+            else reopenAmountInputParent(player, input);
+            return;
+        }
+        if (input.isIssuance()) {
+            if (!roles.allows(player, RoleAccess.MONETARY)) return;
+            UUID request;
+            try {
+                request = UUID.fromString(text);
+            } catch (IllegalArgumentException invalid) {
+                player.sendMessage("申请编号无效，请复制完整的发行申请编号。");
+                beginAmountInput(player, input.renewed());
+                return;
+            }
+            String actor = "player:" + player.getUniqueId();
+            boolean approve = input.kind == InputKind.APPROVE;
+            java.util.concurrent.CompletionStage<? extends Result<?>> operation = approve
+                    ? economy.approveIssuance(request, actor)
+                    : economy.executeIssuance(request, actor, "gui-issue:" + request);
+            operation.thenAccept(result -> runMain(() -> {
+                player.sendMessage(result.isSuccess() ? (approve ? "发行申请已批准。" : "发行资金已入国库。")
+                        : MessageFormatter.error(result));
+                openAdministration(player);
+            }));
             return;
         }
         final Money amount;
@@ -835,9 +862,17 @@ public final class BloecoMenu implements Listener {
         private final Material material;
         BankAction(String title, Material material) { this.title = title; this.material = material; }
     }
-    private enum InputKind { PAYMENT, BANKING }
+    private enum InputKind { PAYMENT, BANKING, APPROVE, EXECUTE }
     private record AmountInput(UUID promptId, InputKind kind, UUID recipientId,
                                BankAction bankAction, UUID loanId) {
+        private boolean isIssuance() {
+            return kind == InputKind.APPROVE || kind == InputKind.EXECUTE;
+        }
+
+        private static AmountInput issuance(InputKind kind) {
+            return new AmountInput(UUID.randomUUID(), kind, null, null, null);
+        }
+
         private static AmountInput payment(UUID recipientId) {
             return new AmountInput(UUID.randomUUID(), InputKind.PAYMENT, recipientId, null, null);
         }
