@@ -41,7 +41,7 @@ Bloeco 面向 Minecraft 服务端生态，后续会扩展到更多服务端平�
 - 可选 MySQL 8.4/InnoDB 权威存储：Runtime 只创建一个共享 HikariCP 连接池，Ledger、Banking 与 Outbox 共用统一事务基础设施。
 - 数据库并发保护：多账户资金操作按 `account_id` 固定顺序一次性 `FOR UPDATE`，物化余额每次更新都会递增 `version`，不依赖 Java 全局锁。
 - 正式版本迁移：V001-V008 顺序执行并逐版记录；V008 增加跨服节点、玩家目录和可靠通知，迁移失败时经济中心拒绝启动。
-- Redis 7 默认作为可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
+- Redis 7 默认关闭，启用后提供可重建缓存与 Redis Stream 事件层；断线进入降级状态并每 5–30 秒自动重连，恢复后无需重启即可续发 Outbox。
 - 跨服经济：多台 Paper 共享同一 MySQL/Redis，MySQL 是唯一资金权威；`/pay` 支持跨服和已登记的离线玩家，未送达收款通知会在下次登录补发。
 - 整数最小货币单位：金额全程使用 `long`，拒绝浮点误差与超过两位小数的玩家输入。
 - 分级账户：货币当局、财政、机构、玩家四级分类；每个余额都能追溯到复式分录。
@@ -69,7 +69,7 @@ Bloeco 面向 Minecraft 服务端生态，后续会扩展到更多服务端平�
 
 1. 按上方平台兼容性表选择 Paper 和 Java 版本，把对应的 Bloeco 插件 JAR 放入服务器的 `plugins/` 目录。
 2. 单服默认使用 SQLite，首次启动会在插件目录自动创建 `economy.db`，无需安装数据库服务。
-3. 跨服部署请选择 MySQL 8.4 并配置账号，可搭配 Redis 7 加速缓存和事件传输。
+3. 跨服部署需要共享 MySQL 8.4 和 Redis 7。各服设置 `storage.type: mysql`、`redis.enabled: true` 和 `cluster.enabled: true`，使用相同的 `cluster.cluster-id` 和各自唯一的 `cluster.server-id`。旧配置省略 `redis.enabled` 时沿用启用状态。
 4. 启动 Paper，等待控制台出现 `Bloeco ledger is ready.` 后使用 `/eco`。首次空账本会把配置中的资金发行到国库，玩家启动资金随后从国库划拨一次。
 5. 业务插件只安装自己的 JAR，并按照[第三方接入规范](docs/third-party-economy-integration.md)通过 `ServicesManager` 发现 API；不要复制 API 类或连接 Bloeco 数据库。
 

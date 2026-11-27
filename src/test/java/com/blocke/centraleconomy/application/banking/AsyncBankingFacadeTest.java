@@ -4,14 +4,17 @@ import com.blocke.centraleconomy.application.AsyncEconomyFacade;
 import com.blocke.centraleconomy.application.result.ErrorCode;
 import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import com.blocke.centraleconomy.domain.money.Money;
-import com.blocke.centraleconomy.paper.BloecoRuntime;
 import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
+import com.blocke.centraleconomy.domain.banking.BankingReceipt;
+import java.lang.management.ManagementFactory;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.time.Clock;
 import java.util.UUID;
 import java.lang.reflect.Field;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,26 +29,56 @@ class AsyncBankingFacadeTest {
     void ledgerMismatchBlocksBankWritesButKeepsBankTotalsReadable() throws Exception {
         Path database = temporaryDirectory.resolve("economy.db");
         UUID player = UUID.randomUUID();
-        try (BloecoRuntime runtime = BloecoRuntime.sqlite(database)) {
-            var bank = runtime.banking();
+        Clock clock = Clock.systemUTC();
+        var enteredDeposit = new CompletableFuture<Thread>();
+        var releaseDeposit = new CompletableFuture<Void>();
+        try (var economy = AsyncEconomyFacade.sqlite(database, clock, Money.parse("1000000"));
+             var bank = new AsyncBankingFacade(() -> new SqliteBankingStore(database, clock) {
+                 @Override
+                 public BankingReceipt deposit(UUID id, Money amount, String key) {
+                     enteredDeposit.complete(Thread.currentThread());
+                     releaseDeposit.orTimeout(10, TimeUnit.SECONDS).join();
+                     return super.deposit(id, amount, key);
+                 }
+             }, economy.readyStage(), Money.parse("250000"),
+                     new BankingPolicy(100, 320, 2000, Money.parse("10000"), true, 7),
+                     economy::isReadOnly, economy)) {
             assertTrue(bank.readyStage().toCompletableFuture().join().isSuccess());
-            assertTrue(runtime.facade().adjustPlayerBalance(player, Money.parse("100"), "test", "银行测试", "fund")
+            assertTrue(economy.adjustPlayerBalance(player, Money.parse("100"), "test", "银行测试", "fund")
                     .toCompletableFuture().join().isSuccess());
-            assertTrue(bank.deposit(player, Money.parse("10"), "initial-deposit").toCompletableFuture().join().isSuccess());
             try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
                  var statement = connection.createStatement()) {
                 assertEquals(1, statement.executeUpdate("UPDATE account_balances SET balance_minor = balance_minor + 1 "
                         + "WHERE account_id = 'fiscal:treasury'"));
+            }
+            var deposit = bank.deposit(player, Money.parse("10"), "initial-deposit");
+            Thread worker = enteredDeposit.get(5, TimeUnit.SECONDS);
+            var verification = economy.verifyIntegrity().toCompletableFuture();
+            var callback = deposit.thenAccept(receipt -> {
+                assertTrue(receipt.isSuccess());
+                assertFalse(Thread.holdsLock(economy));
+                assertFalse(verification.orTimeout(5, TimeUnit.SECONDS).join().value().valid());
+            });
+            try {
+                var threads = ManagementFactory.getThreadMXBean();
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (java.util.Arrays.stream(threads.dumpAllThreads(false, false)).noneMatch(thread ->
+                        thread.getThreadState() == Thread.State.BLOCKED
+                                && thread.getLockOwnerId() == worker.threadId()
+                                && thread.getLockInfo().getIdentityHashCode() == System.identityHashCode(economy))) {
+                    assertFalse(verification.isDone());
+                    assertTrue(System.nanoTime() < deadline, "verification must reach the bank transaction guard");
+                    Thread.yield();
+                }
+                assertFalse(economy.isReadOnly());
+            } finally {
+                releaseDeposit.complete(null);
+            }
+            callback.toCompletableFuture().get(10, TimeUnit.SECONDS);
+            try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                 var statement = connection.createStatement()) {
                 assertEquals(1, statement.executeUpdate("UPDATE bank_deposits SET last_interest_epoch_ms = 0"));
             }
-            java.util.concurrent.CompletableFuture<com.blocke.centraleconomy.application.result.Result<
-                    com.blocke.centraleconomy.application.IntegrityReport>> verification;
-            synchronized (runtime.facade()) {
-                verification = runtime.verifyNow().toCompletableFuture();
-                Thread.sleep(100);
-                assertFalse(verification.isDone(), "read-only transition must wait for the bank transaction guard");
-            }
-            assertFalse(verification.join().value().valid());
             assertEquals(ErrorCode.INTEGRITY_FAILURE,
                     bank.deposit(player, Money.parse("10"), "blocked-deposit").toCompletableFuture().join().errorCode());
             assertEquals(Money.parse("10"), bank.playerSnapshot(player).toCompletableFuture().join().value().deposit());

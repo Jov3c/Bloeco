@@ -57,24 +57,24 @@ class PluginBootstrapTest {
         assertNull(plugin.getCommand("market"));
         assertFalse(plugin.getDataFolder().toPath().resolve("procurement.yml").toFile().exists());
         assertFalse(plugin.getDataFolder().toPath().resolve("market.yml").toFile().exists());
-        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        assertTrue(plugin.runtime().banking().readyStage().toCompletableFuture().join().isSuccess());
         assertTrue(plugin.getDataFolder().toPath().resolve("economy.db").toFile().isFile());
         assertEquals("1000000.00", plugin.getConfig().getString("bootstrap.treasury-initial-balance"));
         assertEquals("100.00", plugin.getConfig().getString("bootstrap.player-initial-balance"));
-        assertEquals(100_000_000L, plugin.runtime().facade().balance(AccountId.treasury())
+        assertEquals(75_000_000L, plugin.runtime().facade().balance(AccountId.treasury())
                 .toCompletableFuture().join().value());
     }
 
     @Test
     void joiningPlayerReceivesConfiguredStarterFundsFromTreasury() {
         CentralEconomyPlugin plugin = MockBukkit.load(CentralEconomyPlugin.class);
-        assertTrue(plugin.runtime().readyStage().toCompletableFuture().join().isSuccess());
+        assertTrue(plugin.runtime().banking().readyStage().toCompletableFuture().join().isSuccess());
 
         var player = MockBukkit.getMock().addPlayer("NewPlayer");
 
         assertEquals(10_000L, plugin.runtime().facade().playerBalance(player.getUniqueId())
                 .toCompletableFuture().join().value());
-        assertEquals(99_990_000L, plugin.runtime().facade().balance(AccountId.treasury())
+        assertEquals(74_990_000L, plugin.runtime().facade().balance(AccountId.treasury())
                 .toCompletableFuture().join().value());
     }
 
