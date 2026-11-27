@@ -360,24 +360,23 @@ public final class SqliteEcosystemStore implements EcosystemStore {
                 commit();
                 return record;
             }
-            record = expireIfNeeded(record, command.transitionedAt());
-            if (record.status() == ReservationRecord.Status.EXPIRED) {
-                commit();
-                return record;
-            }
-            if (record.status() != ReservationRecord.Status.ACTIVE) throw new LedgerException(
-                    LedgerException.Code.POLICY_REJECTED, "reservation is no longer active");
-            releaseReserved(record);
+            var nextStatus = record.statusAfterRelease(command.transitionedAt());
+            boolean active = record.status() == ReservationRecord.Status.ACTIVE;
+            if (active) releaseReserved(record);
             try (PreparedStatement statement = connection.prepareStatement("""
-                    UPDATE fund_reservations SET status='RELEASED',updated_at_epoch_ms=?,
-                        release_idempotency_key=?,release_fingerprint=? WHERE reservation_id=? AND status='ACTIVE'
+                    UPDATE fund_reservations SET status=?,updated_at_epoch_ms=?,
+                        release_idempotency_key=?,release_fingerprint=? WHERE reservation_id=?
                     """)) {
-                statement.setLong(1, command.transitionedAt().toEpochMilli());
-                statement.setString(2, command.idempotencyKey());
-                statement.setString(3, command.fingerprint());
-                statement.setString(4, command.reservationId().toString());
-                if (statement.executeUpdate() != 1) throw new LedgerException(
-                        LedgerException.Code.POLICY_REJECTED, "reservation changed during release");
+                statement.setString(1, nextStatus.name());
+                statement.setLong(2, (active ? command.transitionedAt() : record.updatedAt()).toEpochMilli());
+                statement.setString(3, command.idempotencyKey());
+                statement.setString(4, command.fingerprint());
+                statement.setString(5, command.reservationId().toString());
+                statement.executeUpdate();
+            } catch (SQLException failure) {
+                if (failure.getErrorCode() == 19 && failure.getMessage().contains("release_idempotency_key"))
+                    throw new LedgerException(LedgerException.Code.IDEMPOTENCY_CONFLICT, "release key already used");
+                throw failure;
             }
             ReservationRecord result = reservationRow(command.reservationId()).orElseThrow();
             commit();
