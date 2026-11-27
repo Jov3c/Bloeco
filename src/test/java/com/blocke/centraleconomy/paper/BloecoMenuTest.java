@@ -39,6 +39,28 @@ class BloecoMenuTest {
     }
 
     @Test
+    void monetaryAdminApprovesAndExecutesAnExistingRequest() {
+        var plugin = MockBukkit.createMockPlugin();
+        var admin = server.addPlayer();
+        admin.addAttachment(plugin, RoleAccess.MONETARY, true);
+        var menu = new BloecoMenu(plugin, economy, new RoleAccess());
+        var request = economy.requestIssuance(Money.parse("1"), "requester", "测试发行")
+                .toCompletableFuture().join().value();
+        var treasury = com.blocke.centraleconomy.domain.account.AccountId.treasury();
+        long before = economy.balance(treasury).toCompletableFuture().join().value();
+        for (int slot : new int[]{11, 13}) {
+            menu.open(admin);
+            admin.simulateInventoryClick(16);
+            admin.simulateInventoryClick(slot);
+            submitAmount(menu, admin, request.toString());
+            server.getScheduler().performTicks(2);
+            long balance = economy.balance(treasury).toCompletableFuture().join().value();
+            assertEquals(slot == 11 ? before : before + 100, balance);
+            server.getScheduler().performTicks(2);
+        }
+    }
+
+    @Test
     void ordinaryPlayerSeesOnlyBalanceAndTransfer() {
         var plugin = MockBukkit.createMockPlugin();
         var player = server.addPlayer();

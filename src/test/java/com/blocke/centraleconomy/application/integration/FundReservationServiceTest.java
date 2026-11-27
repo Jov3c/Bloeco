@@ -11,6 +11,8 @@ import com.blocke.centraleconomy.domain.money.Money;
 import com.blocke.centraleconomy.domain.tax.TaxCategory;
 import com.blocke.centraleconomy.storage.sqlite.SqliteEcosystemStore;
 import com.blocke.centraleconomy.storage.sqlite.SqliteLedgerStore;
+import com.blocke.centraleconomy.storage.sqlite.SqliteBankingStore;
+import com.blocke.centraleconomy.domain.banking.BankingPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -28,6 +30,22 @@ class FundReservationServiceTest {
     private static final UUID PLAYER = UUID.fromString("00000000-0000-0000-0000-000000000066");
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-12T10:00:00Z"), ZoneOffset.UTC);
     @TempDir Path temporaryDirectory;
+
+    @Test
+    void depositAllLeavesReservedFundsAvailableForCapture() {
+        Path database = temporaryDirectory.resolve("bank.db");
+        try (Fixture fixture = fixture(database); var bank = new SqliteBankingStore(database, CLOCK)) {
+            bank.initialize(Money.ofMinor(100), new BankingPolicy(100, 320, 2000, Money.parse("100"), true, 7));
+            var reservation = fixture.service.reserve("bloeco.auction", PLAYER, Money.ofMinor(10_000),
+                    CLOCK.instant().plusSeconds(60), context("竞拍冻结", "reserve"));
+            assertThrows(LedgerException.class, () -> bank.deposit(PLAYER, Money.ofMinor(9_501), "deposit"));
+            bank.depositAll(PLAYER, "all");
+            assertEquals(9_500, bank.playerSnapshot(PLAYER).deposit().minor());
+            fixture.service.capture("bloeco.auction", reservation.reservationId(), "escrow", context("竞拍成交", "capture"));
+            assertEquals(0, fixture.store.balance(AccountId.player(PLAYER)));
+            assertEquals(10_000, fixture.store.balance(AccountId.plugin("bloeco.auction", "escrow")));
+        }
+    }
 
     @Test
     void reservationReducesAvailableAndCaptureMovesPrincipalAndTaxOnce() {
@@ -84,11 +102,14 @@ class FundReservationServiceTest {
     }
 
     private Fixture fixture() {
-        Path database = temporaryDirectory.resolve(UUID.randomUUID() + ".db");
+        return fixture(temporaryDirectory.resolve(UUID.randomUUID() + ".db"));
+    }
+
+    private Fixture fixture(Path database) {
         SqliteLedgerStore ledger = new SqliteLedgerStore(database);
         CentralBankService bank = new CentralBankService(ledger, CLOCK);
         bank.initializeCentralAccounts();
-        bank.bootstrapTreasury(Money.ofMinor(20_000));
+        bank.bootstrapTreasury(Money.ofMinor(21_000));
         bank.grantStarterFunds(PLAYER, Money.ofMinor(20_000));
         TaxRuleService taxes = new TaxRuleService(ledger, CLOCK);
         taxes.initializeDefaults();

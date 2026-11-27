@@ -143,7 +143,7 @@ public class SqliteBankingStore implements BankingStore {
             if (replay != null) return replay.receipt("DEPOSIT", playerId);
             accrueDeposit(playerId);
             AccountId wallet = ensurePlayer(playerId);
-            long amount = balance(wallet);
+            long amount = balance(wallet, true);
             if (amount <= 0) throw insufficient("钱包中没有可存入的余额");
             transfer(wallet, AccountId.bankCash(), amount);
             try (PreparedStatement statement = connection.prepareStatement(mysql ? """
@@ -497,10 +497,10 @@ public class SqliteBankingStore implements BankingStore {
         }
         String debitSql = mysql ? """
                 UPDATE account_balances SET balance_minor=balance_minor-?, version=version+1
-                WHERE account_id=? AND balance_minor>=?
+                WHERE account_id=? AND balance_minor-reserved_minor>=?
                 """ : """
                 UPDATE account_balances SET balance_minor=balance_minor-?
-                WHERE account_id=? AND balance_minor>=?
+                WHERE account_id=? AND balance_minor-reserved_minor>=?
                 """;
         try (PreparedStatement debit = connection.prepareStatement(debitSql)) {
             debit.setLong(1, amount);
@@ -676,8 +676,13 @@ public class SqliteBankingStore implements BankingStore {
     }
 
     private long balance(AccountId accountId) throws SQLException {
+        return balance(accountId, false);
+    }
+
+    private long balance(AccountId accountId, boolean availableOnly) throws SQLException {
+        String column = availableOnly ? "balance_minor-reserved_minor" : "balance_minor";
         try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT balance_minor FROM account_balances WHERE account_id=?" + (mysql ? " FOR UPDATE" : ""))) {
+                "SELECT " + column + " FROM account_balances WHERE account_id=?" + (mysql ? " FOR UPDATE" : ""))) {
             statement.setString(1, accountId.value());
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) throw new LedgerException(LedgerException.Code.ACCOUNT_NOT_FOUND, "账户不存在");
